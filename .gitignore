@@ -6,10 +6,9 @@
 **/*.tsbuildinfo
 **/__pycache__/
 **/*.pyc
-**/*.exe
 backend/uploads/*
 !backend/uploads/.gitkeep
-frontend/public/legacy/
+frontend/public/legacy/uploads/
 data/*.sql
 reports/*
 !reports/.gitkeep

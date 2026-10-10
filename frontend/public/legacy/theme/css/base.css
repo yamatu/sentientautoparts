@@ -1,0 +1,93 @@
+
+body {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+BODY {
+  font-family: Microsoft YaHei, Helvetica Neue, Helvetica, Arial, sans-serif;
+  color: #333;
+  font-size: 1.6rem;
+  margin: 0 auto;
+}
+
+html {
+  font-size: 10px;
+}
+
+.autowidth {
+margin: 0 auto;
+min-width: 1200px;
+max-width: 85%;
+}
+
+ul, li{
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+a{
+  text-decoration: none;
+  color:#333;
+}
+
+a:hover{
+  color: #333;
+}
+
+h1, h2, h3, h4, p, input, form, button, input, textarea {
+    margin: 0;
+    padding: 0;
+}
+
+img {
+  border: 0;
+  vertical-align: bottom;
+}
+
+.line-limit {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.container {
+  max-width: 1200px;
+}
+
+
+@media (min-width: 1700px) {
+	.container {
+		max-width: 1200px;
+	}
+}
+
+@media (max-width: 1700px) {
+	.container {
+		max-width: 1200px;
+	}
+}
+
+
+@media all and (max-width: 1200px) {
+	.container {
+		max-width: 990px;
+	}
+}
+
+
+@media all and (max-width: 992px) {
+	.container {
+		max-width: 740px;
+	}
+
+
+}
+
+@media all and (max-width: 768px) {
+	.container{
+		width: 100%;
+		padding: 0 10px;
+	}
+}
