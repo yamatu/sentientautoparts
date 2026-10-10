@@ -1,0 +1,833 @@
+package routes
+
+import (
+	"context"
+	"fanuc-backend/config"
+	"fanuc-backend/controllers"
+	"fanuc-backend/handlers"
+	"fanuc-backend/middleware"
+	"fanuc-backend/services"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+func SetupRoutes(r *gin.Engine) {
+	// Initialize services
+	db := config.GetDB()
+	companyProfileService := services.NewCompanyProfileService(db)
+	socialMediaSettingService := services.NewSocialMediaSettingService(db)
+
+	// Initialize controllers
+	authController := &controllers.AuthController{}
+	productController := &controllers.ProductController{}
+	categoryController := &controllers.CategoryController{}
+	orderController := &controllers.OrderController{}
+	userController := &controllers.UserController{}
+	bannerController := &controllers.BannerController{}
+	purchaseLinkController := &controllers.PurchaseLinkController{}
+	homepageContentController := &controllers.HomepageContentController{}
+	companyProfileController := controllers.NewCompanyProfileController(companyProfileService)
+	socialMediaSettingController := controllers.NewSocialMediaSettingController(socialMediaSettingService)
+	storefrontSettingController := &controllers.StorefrontSettingController{}
+	dashboardController := controllers.NewDashboardController()
+	contactHandler := handlers.NewContactHandler(db)
+	couponController := &controllers.CouponController{}
+	customerController := &controllers.CustomerController{}
+	emailController := &controllers.EmailController{}
+	resendWebhookController := &controllers.ResendWebhookController{}
+	ticketController := &controllers.TicketController{}
+	mediaController := &controllers.MediaController{}
+	watermarkController := &controllers.WatermarkController{}
+	shippingRateController := &controllers.ShippingRateController{}
+	backupController := &controllers.BackupController{}
+	cacheController := &controllers.CacheController{}
+	hotlinkController := &controllers.HotlinkController{}
+	payPalController := &controllers.PayPalController{}
+	payPalPaymentController := &controllers.PayPalPaymentController{}
+	socialLinksController := &controllers.SocialLinksController{}
+	analyticsController := &controllers.AnalyticsController{}
+	newsController := &controllers.NewsController{}
+	sitePageController := &controllers.SitePageController{}
+	productOptimizationController := &controllers.ProductOptimizationController{}
+	commercePolicyController := &controllers.CommercePolicyController{}
+	productSpecDraftController := &controllers.ProductSpecDraftController{}
+	indexNowController := &controllers.IndexNowController{}
+	ebayImportDraftController := &controllers.EbayImportDraftController{}
+	ebayDraftReviewController := controllers.NewEbayDraftReviewController()
+	// An auto-publishing review run imports through the import controller's own
+	// path, so an auto-published product is validated identically to one a human
+	// approved. Registered here rather than imported to keep the two controllers
+	// independent.
+	ebayImportDraftController.RegisterAutoPublishImport()
+	ebayMarketController := &controllers.EbayMarketController{}
+	integrationTokenController := &controllers.IntegrationTokenController{}
+	productProfileDraftController := &controllers.ProductProfileDraftController{}
+	aiAgentController := &controllers.AIAgentController{}
+	services.StartEbayAutoImportDaemon(ebayImportDraftController.ConfirmDraftFn())
+	services.StartProductCatalogImportDaemon(db)
+
+	// Health check endpoint
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "ok",
+			"message": "Vibocnc Backend API is running",
+		})
+	})
+
+	r.GET("/ready", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+		sqlDB, err := db.DB()
+		if err != nil || sqlDB.PingContext(ctx) != nil {
+			c.JSON(503, gin.H{"status": "unavailable"})
+			return
+		}
+		c.JSON(200, gin.H{"status": "ready"})
+	})
+
+	// API v1 routes
+	v1 := r.Group("/api/v1")
+	{
+		// Public routes (no authentication required)
+		public := v1.Group("/public")
+		{
+			store := &controllers.StorefrontController{}
+			public.GET("/storefront/navigation", store.Navigation)
+			public.GET("/storefront/home", store.Home)
+			public.GET("/storefront/settings", store.Settings)
+			public.GET("/storefront/b2b-home", store.B2BHome)
+			public.GET("/storefront/products", store.Products)
+			public.GET("/storefront/products/:sku", store.Product)
+			public.GET("/storefront/articles", store.Articles)
+			public.GET("/storefront/articles/:slug", store.Article)
+			public.GET("/storefront/pages/:key", store.Page)
+			public.GET("/storefront/resolve", store.Resolve)
+			// Categories (public read access) - cached
+			public.GET("/categories", middleware.CachePublicGET(middleware.CacheTTLCategories(), "cache:public:categories:"), categoryController.GetCategories)
+			public.GET("/categories/path/*path", categoryController.GetCategoryByPath)
+
+			public.GET("/categories/:id", categoryController.GetCategory)
+			public.GET("/categories/slug/:slug", categoryController.GetCategoryBySlug)
+
+			// Products (public read access) - cached
+			public.GET("/products", middleware.CachePublicGET(middleware.CacheTTLProducts(), "cache:public:products:"), productController.GetProducts)
+			public.GET("/products/default-image", watermarkController.DefaultProductImage)
+			public.GET("/products/default-image/:sku", watermarkController.DefaultProductImage)
+			// Media validators and crawlers may probe image URLs with HEAD before
+			// downloading them. Reuse the image handler so headers and status match GET.
+			public.HEAD("/products/default-image", watermarkController.DefaultProductImage)
+			public.HEAD("/products/default-image/:sku", watermarkController.DefaultProductImage)
+
+			// Shipping (public)
+			public.GET("/shipping/countries", shippingRateController.PublicCountries)
+			public.GET("/shipping/quote", shippingRateController.PublicQuote)
+			public.GET("/shipping/free-countries", shippingRateController.PublicFreeShippingCountries)
+
+			// Product detail endpoints are also cached (same TTL as product list)
+			public.GET("/products/:id", middleware.CachePublicGET(middleware.CacheTTLProducts(), "cache:public:product:"), productController.GetProduct)
+			public.GET("/products/sku", middleware.CachePublicGET(middleware.CacheTTLProducts(), "cache:public:product_sku_query:"), productController.GetProductBySKUQuery) // query param: sku=...
+			public.GET("/products/sku/:sku", middleware.CachePublicGET(middleware.CacheTTLProducts(), "cache:public:product_sku:"), productController.GetProductBySKU)       // legacy: path param
+
+			// Banners (public read access) - cached
+			public.GET("/banners", middleware.CachePublicGET(middleware.CacheTTLHomepage(), "cache:public:banners:"), bannerController.GetPublicBanners)
+
+			// Homepage Content (public read access) - cached
+			public.GET("/homepage-content", middleware.CachePublicGET(middleware.CacheTTLHomepage(), "cache:public:homepage:"), homepageContentController.GetHomepageContents)
+
+			public.GET("/homepage-content/section/:section_key", homepageContentController.GetHomepageContentBySection)
+
+			// Company Profile (public read access) - cached
+			public.GET("/company-profile", middleware.CachePublicGET(middleware.CacheTTLHomepage(), "cache:public:company_profile:"), companyProfileController.GetCompanyProfile)
+
+			// Social media links (public read access) - cached with homepage content.
+			public.GET("/social-media", middleware.CachePublicGET(middleware.CacheTTLHomepage(), "cache:public:homepage:social_media:"), socialMediaSettingController.GetPublic)
+
+			// Public tracking snippet; only enabled code is returned.
+			public.GET("/analytics/config", analyticsController.GetTrackingCode)
+
+			// Contact form submission (public access)
+			public.POST("/contact", middleware.IPRateLimit("contact", 5, time.Minute), contactHandler.SubmitContact)
+
+			// Coupon validation (public access)
+			public.POST("/coupons/validate", middleware.IPRateLimit("coupon_validate", 30, time.Minute), couponController.ValidateCoupon)
+
+			// PayPal (public config)
+			public.GET("/paypal/config", payPalController.GetPublicConfig)
+			public.GET("/social-links", socialLinksController.GetPublicConfig)
+
+			// Email (public)
+			public.GET("/email/config", emailController.GetPublicConfig)
+			public.POST("/email/send-code", middleware.IPRateLimit("email_send_code", 10, time.Hour), emailController.SendCode)
+			public.GET("/indexnow/key", indexNowController.GetPublicKey)
+
+			// News / Articles (public read access)
+			public.GET("/news", newsController.GetPublicArticles)
+			public.GET("/news/path/*path", newsController.GetPublicArticleByPath)
+			public.GET("/news/:id", newsController.GetPublicArticle)
+			public.GET("/news/slug/:slug", newsController.GetPublicArticleBySlug)
+			public.GET("/site-pages/:pageKey", sitePageController.GetPublicPage)
+
+			// Storefront commercial promise (shipping / warranty / return policy)
+			public.GET("/commerce-policy", middleware.CachePublicGET(middleware.CacheTTLHomepage(), "cache:public:commerce_policy:"), commercePolicyController.GetPublicSettings)
+		}
+
+		// PayPal inbound webhook (signature verified, no other auth).
+		v1.POST("/paypal/webhook", payPalPaymentController.PayPalWebhook)
+
+		// Authentication routes
+		auth := v1.Group("/auth")
+		{
+			auth.POST("/login", middleware.LoginRateLimitMiddleware(), authController.Login)
+			auth.POST("/logout", authController.Logout)
+			auth.POST("/password-reset/request", middleware.LoginRateLimitMiddleware(), authController.RequestPasswordReset)
+			auth.POST("/password-reset/confirm", middleware.IPRateLimit("admin_pwreset_confirm", 10, time.Hour), authController.ConfirmPasswordReset)
+
+			// Protected auth routes
+			authProtected := auth.Group("")
+			authProtected.Use(middleware.AuthMiddleware())
+			{
+				authProtected.GET("/profile", authController.GetProfile)
+				authProtected.PUT("/profile", authController.UpdateProfile)
+				authProtected.POST("/change-password", authController.ChangePassword)
+				authProtected.POST("/refresh", authController.RefreshToken)
+			}
+		}
+
+		// Admin routes (authentication required)
+		admin := v1.Group("/admin")
+		admin.Use(middleware.AuthMiddleware())
+		{
+			// AI catalog assistant: it returns reviewable proposals; writes require a second explicit apply call.
+			aiAgent := admin.Group("/ai-agent")
+			aiAgent.Use(middleware.EditorOrAdmin())
+			{
+				aiAgent.GET("/status", aiAgentController.Status)
+				aiAgent.POST("/chat", aiAgentController.Chat)
+				aiAgent.POST("/chat/stream", aiAgentController.ChatStream)
+				// Persisted chat sessions: history, resume-after-refresh, per-conversation locking.
+				aiAgent.GET("/conversations", aiAgentController.ListConversations)
+				aiAgent.GET("/conversations/:id", aiAgentController.GetConversation)
+				aiAgent.GET("/conversations/:id/stream", aiAgentController.ResumeConversationStream)
+				aiAgent.DELETE("/conversations/:id", aiAgentController.DeleteConversation)
+				aiAgent.POST("/article-draft", aiAgentController.GenerateArticleDraft)
+				aiAgent.POST("/prices/preview", aiAgentController.PreviewPrices)
+				aiAgent.POST("/apply", aiAgentController.Apply)
+				aiAgent.POST("/seo/jobs", aiAgentController.StartSelectedSEO)
+				aiAgent.POST("/seo/candidates", aiAgentController.StartCandidateSEO)
+				aiAgent.POST("/seo/category-jobs", middleware.AdminOnly(), aiAgentController.StartCategoryOptimizationJob)
+				aiAgent.POST("/seo/spec-jobs", aiAgentController.StartSpecResearchJob)
+				aiAgent.POST("/seo/audit", aiAgentController.SEOAudit)
+				aiAgent.POST("/seo/auto-fix", aiAgentController.StartSEOAutoFix)
+				aiAgent.POST("/category-seo", middleware.AdminOnly(), aiAgentController.OptimizeCategorySEO)
+				aiAgent.GET("/seo/jobs", aiAgentController.ListSEOJobs)
+				aiAgent.GET("/seo/jobs/:id", aiAgentController.GetSEOJob)
+				aiAgent.GET("/seo/jobs/:id/items", aiAgentController.ListSEOJobItems)
+				aiAgent.POST("/seo/jobs/:id/pause", aiAgentController.PauseSEOJob)
+				aiAgent.POST("/seo/jobs/:id/resume", aiAgentController.ResumeSEOJob)
+				aiAgent.POST("/seo/jobs/:id/end", aiAgentController.EndPausedSEOJob)
+				aiAgent.GET("/seo/stats", aiAgentController.GetSEOStats)
+				// Classification review queue: candidates that could not be published
+				// automatically are decided by an administrator here, which is the
+				// only place an unverified type can become a public category.
+				aiAgent.GET("/classification/review", middleware.AdminOnly(), aiAgentController.ListClassificationReview)
+				aiAgent.POST("/classification/review/:id/approve", middleware.AdminOnly(), aiAgentController.ApproveClassificationReview)
+				aiAgent.POST("/classification/review/:id/dismiss", middleware.AdminOnly(), aiAgentController.DismissClassificationReview)
+				aiAgent.GET("/prompts", aiAgentController.ListPromptPresets)
+				aiAgent.POST("/prompts", aiAgentController.CreatePromptPreset)
+				aiAgent.PUT("/prompts/:id", aiAgentController.UpdatePromptPreset)
+				aiAgent.DELETE("/prompts/:id", aiAgentController.DeletePromptPreset)
+				aiAgent.POST("/prompts/:id/use", aiAgentController.MarkPromptPresetUsed)
+				aiAgent.GET("/settings", middleware.AdminOnly(), aiAgentController.GetSettings)
+				aiAgent.PUT("/settings", middleware.AdminOnly(), aiAgentController.UpdateSettings)
+				aiAgent.GET("/profiles", middleware.AdminOnly(), aiAgentController.ListProfiles)
+				aiAgent.POST("/profiles", middleware.AdminOnly(), aiAgentController.CreateProfile)
+				aiAgent.PUT("/profiles/:id", middleware.AdminOnly(), aiAgentController.UpdateProfile)
+				aiAgent.DELETE("/profiles/:id", middleware.AdminOnly(), aiAgentController.DeleteProfile)
+				aiAgent.POST("/profiles/:id/activate", middleware.AdminOnly(), aiAgentController.ActivateProfile)
+				aiAgent.POST("/test-connection", middleware.AdminOnly(), aiAgentController.TestProfileConnection)
+				// Verifies that the configured provider accepts the tools field used by
+				// the agent loop, so a capability gap is found before production traffic.
+				aiAgent.POST("/test-tools", middleware.AdminOnly(), aiAgentController.TestToolCalling)
+			}
+
+			// Dashboard statistics (admin and editor access)
+			dashboard := admin.Group("/dashboard")
+			dashboard.Use(middleware.EditorOrAdmin())
+			{
+				dashboard.GET("/stats", dashboardController.GetDashboardStats)
+				dashboard.GET("/recent-orders", dashboardController.GetRecentOrders)
+				dashboard.GET("/top-products", dashboardController.GetTopProducts)
+				dashboard.GET("/revenue", dashboardController.GetRevenueData)
+			}
+
+			// Category management (admin and editor access)
+			categories := admin.Group("/categories")
+			categories.Use(middleware.EditorOrAdmin())
+			{
+				categories.GET("", categoryController.GetCategories)
+				categories.GET("/:id/deletion-impact", categoryController.GetCategoryDeletionImpact)
+				categories.GET("/:id", categoryController.GetCategory)
+				categories.POST("", categoryController.CreateCategory)
+				categories.PUT("/reorder", categoryController.ReorderCategories)
+				categories.PUT("/:id", categoryController.UpdateCategory)
+				categories.DELETE("/:id", middleware.AdminOnly(), categoryController.DeleteCategory)
+				categories.POST("/cleanup/preview", middleware.AdminOnly(), categoryController.PreviewCategoryCleanup)
+				categories.POST("/cleanup/apply", middleware.AdminOnly(), categoryController.ApplyCategoryCleanup)
+			}
+
+			// Product management (admin and editor access)
+			products := admin.Group("/products")
+			products.Use(middleware.EditorOrAdmin())
+			{
+				// Bulk import (XLSX)
+				products.GET("/import/template", productController.DownloadImportTemplate)
+				products.POST("/import/xlsx", productController.ImportProductsXLSX)
+				products.POST("/import/csv", productController.ImportProductsQuoteCSV)
+				products.GET("/import/xlsx/tasks/:id", productController.GetProductImportTask)
+
+				// Bulk update is_active / is_featured
+				products.PUT("/bulk-update", productController.BulkUpdateProducts)
+				products.POST("/selection-ids", productController.GetBulkProductSelectionIDs)
+
+				// Model-number specification research. Batch and per-product runs
+				// are queued on the AI job queue; only a bare model number (no
+				// product row yet) is researched synchronously. Nothing is
+				// published without an explicit approval.
+				products.POST("/spec-research", productSpecDraftController.ResearchModel)
+				products.POST("/spec-research/batch", productSpecDraftController.StartBatchSpecResearchJob)
+				products.POST("/:id/spec-research", productSpecDraftController.StartProductSpecResearchJob)
+				products.GET("/spec-drafts", productSpecDraftController.ListDrafts)
+				products.GET("/spec-drafts/:id", productSpecDraftController.GetDraft)
+				products.POST("/spec-drafts/:id/approve", productSpecDraftController.ApproveDraft)
+				products.POST("/spec-drafts/:id/reject", productSpecDraftController.RejectDraft)
+				products.GET("/optimization-status", productOptimizationController.GetOptimizationStatus)
+				products.POST("/optimize", productOptimizationController.OptimizeProduct)
+				products.POST("/bulk-optimize", productOptimizationController.BulkOptimizeProducts)
+				products.POST("/auto-optimize-categories", middleware.AdminOnly(), productOptimizationController.AutoOptimizeProductCategories)
+				products.POST("/standardize-titles", middleware.AdminOnly(), productOptimizationController.StandardizeProductTitles)
+				products.POST("/classification-audit", middleware.AdminOnly(), productOptimizationController.AuditProductClassifications)
+
+				// Bulk: apply/remove default watermark image URL
+				products.PUT("/bulk-default-image/apply", productController.BulkApplyDefaultImage)
+				products.PUT("/bulk-default-image/remove", productController.BulkRemoveDefaultImage)
+				products.GET("/bulk-default-image/brands", productController.ListProductImageAutofillBrands)
+				products.POST("/bulk-default-image/jobs", productController.StartProductImageAutofill)
+				products.GET("/bulk-default-image/jobs/latest", productController.GetLatestProductImageAutofillJob)
+				products.GET("/bulk-default-image/jobs/:id", productController.GetProductImageAutofillJob)
+				products.POST("/bulk-default-image/jobs/:id/pause", productController.PauseProductImageAutofillJob)
+				products.POST("/bulk-default-image/jobs/:id/resume", productController.ResumeProductImageAutofillJob)
+				products.POST("/image-cleanup/preview", middleware.AdminOnly(), productController.PreviewUntrustedProductImages)
+				products.GET("/image-cleanup/settings", middleware.AdminOnly(), productController.GetProductImagePolicySettings)
+				products.PUT("/image-cleanup/settings", middleware.AdminOnly(), productController.UpdateProductImagePolicySettings)
+				products.POST("/image-cleanup/jobs", middleware.AdminOnly(), productController.StartUntrustedProductImageCleanup)
+				products.GET("/image-cleanup/jobs/latest", middleware.AdminOnly(), productController.GetLatestProductImageCleanupJob)
+				products.GET("/image-cleanup/jobs/:id", middleware.AdminOnly(), productController.GetProductImageCleanupJob)
+				products.POST("/image-cleanup/jobs/:id/pause", middleware.AdminOnly(), productController.PauseProductImageCleanupJob)
+				products.POST("/image-cleanup/jobs/:id/resume", middleware.AdminOnly(), productController.ResumeProductImageCleanupJob)
+				products.PUT("/bulk-images/clear", middleware.AdminOnly(), productController.BulkClearImages)
+				products.PUT("/bulk-category-image", productController.BulkApplyCategoryImage)
+
+				products.GET("", productController.GetProducts)
+				products.GET("/:id", productController.GetProduct)
+				products.POST("", productController.CreateProduct)
+				products.PUT("/:id", productController.UpdateProduct)
+				products.DELETE("/:id", middleware.AdminOnly(), productController.DeleteProduct)
+
+				// Product image management
+				products.POST("/:id/images", productController.AddImage)
+				products.GET("/:id/images", productController.GetProductImages)
+				// Note: controller expects :imageIndex for deletion
+				products.DELETE("/:id/images/:imageIndex", middleware.AdminOnly(), productController.DeleteImage)
+			}
+
+			// eBay import draft management (admin and editor access)
+			ebayImportDrafts := admin.Group("/ebay-import-drafts")
+			ebayImportDrafts.Use(middleware.EditorOrAdmin())
+			{
+				ebayImportDrafts.POST("/upload", ebayImportDraftController.Upload)
+				ebayImportDrafts.POST("/json-import", ebayImportDraftController.StartJSONImport)
+				ebayImportDrafts.POST("/json-import/tasks", ebayImportDraftController.CreateJSONImportTask)
+				ebayImportDrafts.GET("/json-import/tasks/latest", ebayImportDraftController.GetLatestJSONImportTask)
+				ebayImportDrafts.GET("/json-import/tasks/:taskId", ebayImportDraftController.GetJSONImportTask)
+				ebayImportDrafts.PUT("/json-import/tasks/:taskId/chunk", ebayImportDraftController.UploadJSONImportChunk)
+				ebayImportDrafts.POST("/json-import/tasks/:taskId/chunk", ebayImportDraftController.UploadJSONImportChunk)
+				ebayImportDrafts.POST("/json-import/tasks/:taskId/complete", ebayImportDraftController.CompleteJSONImportTask)
+				ebayImportDrafts.POST("/json-import/tasks/:taskId/pause", ebayImportDraftController.PauseJSONImportTask)
+				ebayImportDrafts.POST("/json-import/tasks/:taskId/resume", ebayImportDraftController.ResumeJSONImportTask)
+				ebayImportDrafts.DELETE("/json-import/tasks/:taskId", ebayImportDraftController.CancelJSONImportTask)
+				ebayImportDrafts.GET("", ebayImportDraftController.List)
+				ebayImportDrafts.POST("/selection-ids", ebayImportDraftController.SelectionIDs)
+				ebayImportDrafts.POST("/bulk-confirm", ebayImportDraftController.BulkConfirm)
+				ebayImportDrafts.GET("/bulk-confirm/tasks/latest", ebayImportDraftController.GetLatestBulkConfirmTask)
+				ebayImportDrafts.GET("/bulk-confirm/tasks/:taskId", ebayImportDraftController.GetBulkConfirmTask)
+				ebayImportDrafts.POST("/bulk-confirm/tasks/:taskId/pause", ebayImportDraftController.PauseBulkConfirmTask)
+				ebayImportDrafts.POST("/bulk-confirm/tasks/:taskId/resume", ebayImportDraftController.ResumeBulkConfirmTask)
+				ebayImportDrafts.POST("/bulk-recheck", ebayImportDraftController.BulkRecheck)
+
+				// Automated AI review. These are registered before "/:id" because gin
+				// matches in registration order and "/:id" would otherwise capture
+				// "ai-review" as a draft id.
+				ebayImportDrafts.GET("/ai-review/summary", ebayDraftReviewController.ReviewQueueSummary)
+				ebayImportDrafts.GET("/ai-review/latest", ebayDraftReviewController.GetLatestReviewJob)
+				ebayImportDrafts.POST("/ai-review", ebayDraftReviewController.StartReview)
+				ebayImportDrafts.POST("/ai-review/approve", ebayImportDraftController.ApproveReview)
+				ebayImportDrafts.POST("/ai-review/reject", ebayDraftReviewController.RejectReview)
+				ebayImportDrafts.GET("/ai-review/:jobId", ebayDraftReviewController.GetReviewJob)
+				ebayImportDrafts.GET("/ai-review/:jobId/items", ebayDraftReviewController.GetReviewJobItems)
+				ebayImportDrafts.POST("/ai-review/:jobId/pause", ebayDraftReviewController.PauseReviewJob)
+				ebayImportDrafts.POST("/ai-review/:jobId/resume", ebayDraftReviewController.ResumeReviewJob)
+				ebayImportDrafts.POST("/ai-review/:jobId/cancel", ebayDraftReviewController.CancelReviewJob)
+				// POST alias keeps bulk deletion compatible with proxies that reject
+				// request bodies on DELETE while retaining the legacy DELETE route.
+				ebayImportDrafts.POST("/bulk-delete", ebayImportDraftController.BulkDelete)
+				ebayImportDrafts.DELETE("/bulk", ebayImportDraftController.BulkDelete)
+				ebayImportDrafts.GET("/:id", ebayImportDraftController.Get)
+				ebayImportDrafts.PUT("/:id", ebayImportDraftController.Update)
+				ebayImportDrafts.POST("/:id/recheck", ebayImportDraftController.Recheck)
+				ebayImportDrafts.POST("/:id/confirm", ebayImportDraftController.Confirm)
+				ebayImportDrafts.DELETE("/:id", ebayImportDraftController.Delete)
+			}
+
+			// eBay market research (crawler output + price suggestions).
+			// The crawler pushes quotes here; price changes are only ever applied
+			// through the explicit price-sync/apply call.
+			ebayMarket := admin.Group("/ebay-market")
+			ebayMarket.Use(middleware.EditorOrAdmin())
+			{
+				ebayMarket.POST("/ingest", ebayMarketController.Ingest)
+				ebayMarket.GET("/summary", ebayMarketController.Summary)
+				ebayMarket.POST("/identify", ebayMarketController.IdentifyProduct)
+				ebayMarket.POST("/identify/jobs", ebayMarketController.StartIdentificationJob)
+				ebayMarket.GET("/profile-drafts", productProfileDraftController.List)
+				ebayMarket.GET("/profile-drafts/:id", productProfileDraftController.Get)
+				ebayMarket.POST("/profile-drafts/:id/approve", middleware.AdminOnly(), productProfileDraftController.Approve)
+				ebayMarket.POST("/profile-drafts/:id/reject", middleware.AdminOnly(), productProfileDraftController.Reject)
+				ebayMarket.POST("/quotes/clear", middleware.AdminOnly(), ebayMarketController.Clear)
+				ebayMarket.GET("/quotes", ebayMarketController.List)
+				ebayMarket.GET("/quotes/:id", ebayMarketController.Get)
+				ebayMarket.DELETE("/quotes/:id", middleware.AdminOnly(), ebayMarketController.Delete)
+				ebayMarket.POST("/price-sync/preview", ebayMarketController.PreviewPrices)
+				ebayMarket.POST("/price-sync/apply", middleware.AdminOnly(), ebayMarketController.ApplyPrices)
+			}
+
+			// API tokens are machine credentials, so the entire group is
+			// admin-only: an editor must not be able to mint a credential that
+			// outlives their own access.
+			integrationTokens := admin.Group("/integration-tokens")
+			integrationTokens.Use(middleware.AdminOnly())
+			{
+				integrationTokens.GET("", integrationTokenController.List)
+				integrationTokens.POST("", integrationTokenController.Create)
+				integrationTokens.PATCH("/:id", integrationTokenController.Update)
+				integrationTokens.POST("/:id/revoke", integrationTokenController.Revoke)
+				integrationTokens.DELETE("/:id", integrationTokenController.Delete)
+			}
+
+			// Shipping template management (admin and editor access)
+			shippingRates := admin.Group("/shipping-rates")
+			shippingRates.Use(middleware.EditorOrAdmin())
+			{
+				shippingRates.GET("", shippingRateController.AdminList)
+				shippingRates.GET("/import/template", shippingRateController.DownloadTemplate)
+				shippingRates.POST("/import/xlsx", shippingRateController.ImportXLSX)
+				shippingRates.POST("/bulk-delete", middleware.AdminOnly(), shippingRateController.BulkDelete)
+				// Allowed countries whitelist
+				shippingRates.GET("/allowed-countries", shippingRateController.ListAllowedCountries)
+				shippingRates.POST("/allowed-countries", shippingRateController.AddAllowedCountry)
+				shippingRates.DELETE("/allowed-countries/:code", shippingRateController.RemoveAllowedCountry)
+				shippingRates.POST("/allowed-countries/bulk", shippingRateController.BulkSetAllowedCountries)
+				// Free shipping settings
+				shippingRates.GET("/free-shipping", shippingRateController.GetFreeShippingCountries)
+				shippingRates.POST("/free-shipping", shippingRateController.SetFreeShippingCountries)
+			}
+
+			// Order management (admin only)
+			orders := admin.Group("/orders")
+			orders.Use(middleware.AdminOnly())
+			{
+				orders.GET("", orderController.GetOrders)
+				orders.GET("/:id", orderController.GetOrder)
+				orders.PUT("/:id", orderController.UpdateOrder)
+				orders.PUT("/:id/status", orderController.UpdateOrderStatus)
+				orders.POST("/:id/refund", orderController.RefundOrder)
+				orders.POST("/:id/refund/:refundID/sync", orderController.SyncRefund)
+				orders.DELETE("/:id", orderController.DeleteOrder)
+			}
+
+			// User management (admin only)
+			users := admin.Group("/users")
+			users.Use(middleware.AdminOnly())
+			{
+				users.GET("", userController.GetUsers)
+				users.GET("/:id", userController.GetUser)
+				users.POST("", userController.CreateUser)
+				users.PUT("/:id", userController.UpdateUser)
+				users.DELETE("/:id", userController.DeleteUser)
+			}
+
+			// Banner management (admin and editor access)
+			banners := admin.Group("/banners")
+			banners.Use(middleware.EditorOrAdmin())
+			{
+				banners.GET("", bannerController.GetBanners)
+				banners.GET("/:id", bannerController.GetBanner)
+				banners.POST("", bannerController.CreateBanner)
+				banners.PUT("/:id", bannerController.UpdateBanner)
+				banners.PUT("/:id/order", bannerController.UpdateBannerOrder)
+				banners.DELETE("/:id", middleware.AdminOnly(), bannerController.DeleteBanner)
+			}
+
+			// Purchase Link management (admin and editor access)
+			purchaseLinks := admin.Group("/purchase-links")
+			purchaseLinks.Use(middleware.EditorOrAdmin())
+			{
+				purchaseLinks.GET("", purchaseLinkController.GetPurchaseLinks)
+				purchaseLinks.GET("/:id", purchaseLinkController.GetPurchaseLink)
+				purchaseLinks.POST("", purchaseLinkController.CreatePurchaseLink)
+				purchaseLinks.PUT("/:id", purchaseLinkController.UpdatePurchaseLink)
+				purchaseLinks.DELETE("/:id", middleware.AdminOnly(), purchaseLinkController.DeletePurchaseLink)
+			}
+
+			// Media library (admin and editor access)
+			media := admin.Group("/media")
+			media.Use(middleware.EditorOrAdmin())
+			{
+				media.GET("", mediaController.List)
+				media.POST("/upload", mediaController.Upload)
+				media.POST("/rotate", mediaController.Rotate)
+				media.PUT("/batch", mediaController.BatchUpdate)
+				media.DELETE("/batch", mediaController.BatchDelete)
+				media.POST("/cleanup-missing", middleware.AdminOnly(), mediaController.CleanupMissing)
+				media.POST("/sku-archive/jobs", middleware.AdminOnly(), mediaController.StartSKUImageArchive)
+				media.GET("/sku-archive/jobs/latest", middleware.AdminOnly(), mediaController.GetLatestSKUImageArchiveJob)
+				media.GET("/sku-archive/jobs/:id", middleware.AdminOnly(), mediaController.GetSKUImageArchiveJob)
+				media.PUT("/sku-archive/jobs/:id/chunk", middleware.AdminOnly(), mediaController.UploadSKUImageArchiveChunk)
+				media.POST("/sku-archive/jobs/:id/complete", middleware.AdminOnly(), mediaController.CompleteSKUImageArchive)
+				media.POST("/sku-archive/jobs/:id/pause", middleware.AdminOnly(), mediaController.PauseSKUImageArchiveJob)
+				media.POST("/sku-archive/jobs/:id/resume", middleware.AdminOnly(), mediaController.ResumeSKUImageArchiveJob)
+				media.DELETE("/sku-archive/jobs/:id", middleware.AdminOnly(), mediaController.CancelSKUImageArchiveJob)
+				media.GET("/watermark/settings", watermarkController.GetSettings)
+				media.PUT("/watermark/settings", watermarkController.UpdateSettings)
+				media.POST("/watermark", watermarkController.GenerateFromMedia)
+				media.GET("/:id/products", mediaController.ProductsUsingMedia)
+				media.PUT("/:id", mediaController.Update)
+			}
+
+			// Backup & restore (admin only)
+			backup := admin.Group("/backup")
+			backup.Use(middleware.AdminOnly())
+			{
+				backup.GET("/db", backupController.DownloadDBBackup)
+				backup.POST("/db/restore", backupController.RestoreDBBackup)
+				backup.GET("/media", backupController.DownloadMediaBackup)
+				backup.POST("/media/restore", backupController.RestoreMediaBackup)
+				backup.GET("/products/export", backupController.DownloadProductCatalog)
+				backup.POST("/products/import/jobs", backupController.CreateProductCatalogImportJob)
+				backup.PUT("/products/import/jobs/:id/chunk", backupController.UploadProductCatalogChunk)
+				backup.POST("/products/import/jobs/:id/complete", backupController.CompleteProductCatalogImportUpload)
+				backup.GET("/products/import/jobs/:id", backupController.GetProductCatalogImportJob)
+				backup.GET("/products/import/jobs/:id/preview", backupController.GetProductCatalogImportPreview)
+				backup.POST("/products/import/jobs/:id/apply", backupController.ApplyProductCatalogImport)
+				backup.POST("/products/import/jobs/:id/pause", backupController.PauseProductCatalogImport)
+				backup.POST("/products/import/jobs/:id/resume", backupController.ResumeProductCatalogImport)
+				backup.DELETE("/products/import/jobs/:id", backupController.CancelProductCatalogImport)
+			}
+
+			// Cache & CDN (admin only)
+			cache := admin.Group("/cache")
+			cache.Use(middleware.AdminOnly())
+			{
+				cache.GET("/settings", cacheController.GetSettings)
+				cache.PUT("/settings", cacheController.UpdateSettings)
+				cache.POST("/purge", cacheController.PurgeNow)
+				cache.POST("/test", cacheController.Test)
+			}
+
+			// Hotlink protection (admin only)
+			hotlink := admin.Group("/hotlink")
+			hotlink.Use(middleware.AdminOnly())
+			{
+				hotlink.GET("/settings", hotlinkController.GetSettings)
+				hotlink.PUT("/settings", hotlinkController.UpdateSettings)
+			}
+
+			// PayPal (admin only)
+			paypal := admin.Group("/paypal")
+			paypal.Use(middleware.AdminOnly())
+			{
+				paypal.GET("/settings", payPalController.GetSettings)
+				paypal.PUT("/settings", payPalController.UpdateSettings)
+			}
+
+			// Social links and Organization identity signals (admin only)
+			socialLinks := admin.Group("/social-links")
+			socialLinks.Use(middleware.AdminOnly())
+			{
+				socialLinks.GET("/settings", socialLinksController.GetSettings)
+				socialLinks.PUT("/settings", socialLinksController.UpdateSettings)
+			}
+
+			// IndexNow / Bing (admin only)
+			indexnow := admin.Group("/indexnow")
+			indexnow.Use(middleware.AdminOnly())
+			{
+				indexnow.GET("/settings", indexNowController.GetSettings)
+				indexnow.GET("/product-status", indexNowController.GetProductStatus)
+				indexnow.GET("/verify-key", indexNowController.VerifyKey)
+				indexnow.PUT("/settings", indexNowController.UpdateSettings)
+				indexnow.POST("/submit", indexNowController.Submit)
+				indexnow.POST("/submit-products", indexNowController.SubmitProducts)
+				indexnow.POST("/submit-sample", indexNowController.SubmitSampleProduct)
+				indexnow.POST("/products/:id/submit", indexNowController.SubmitProductByID)
+			}
+
+			// Visitor Analytics (editor/admin for reads, admin-only for cleanup)
+			analytics := admin.Group("/analytics")
+			analytics.Use(middleware.EditorOrAdmin())
+			{
+				analytics.GET("/overview", analyticsController.GetOverview)
+				analytics.GET("/visitors", analyticsController.GetVisitors)
+				analytics.GET("/countries", analyticsController.GetCountries)
+				analytics.GET("/pages", analyticsController.GetPages)
+				analytics.GET("/trends", analyticsController.GetTrends)
+				analytics.GET("/country-visitors", analyticsController.GetCountryVisitors)
+				analytics.GET("/product-skus", analyticsController.GetProductSKUs)
+				analytics.GET("/country-skus", analyticsController.GetCountrySKUs)
+				analytics.GET("/settings", analyticsController.GetSettings)
+				analytics.PUT("/settings", analyticsController.UpdateSettings)
+				analytics.DELETE("/cleanup", middleware.AdminOnly(), analyticsController.ManualCleanup)
+			}
+
+			// News / Article management (editor/admin)
+			news := admin.Group("/news")
+			news.Use(middleware.EditorOrAdmin())
+			{
+				news.GET("", newsController.GetArticles)
+				news.GET("/:id", newsController.GetArticle)
+				news.POST("", newsController.CreateArticle)
+				news.PUT("/:id", newsController.UpdateArticle)
+				news.DELETE("/:id", middleware.AdminOnly(), newsController.DeleteArticle)
+			}
+
+			sitePages := admin.Group("/site-pages")
+			sitePages.Use(middleware.EditorOrAdmin())
+			{
+				sitePages.GET("", sitePageController.GetPages)
+				sitePages.GET("/:pageKey", sitePageController.GetPage)
+				sitePages.PUT("/:pageKey", sitePageController.UpsertPage)
+			}
+
+			// Email mailbox (editor/admin) + settings/marketing (admin only)
+			email := admin.Group("/email")
+			email.Use(middleware.EditorOrAdmin())
+			{
+				email.GET("/mailbox/config", emailController.MailboxConfig)
+				email.GET("/mailbox/folders", emailController.MailboxFolders)
+				email.GET("/mailbox/folders/:folderID/messages", emailController.MailboxMessages)
+				email.GET("/mailbox/messages/:messageID", emailController.MailboxMessage)
+				email.GET("/mailbox/messages/:messageID/attachments", emailController.MailboxAttachments)
+				email.GET("/mailbox/messages/:messageID/attachments/:attachmentID/download", emailController.MailboxAttachmentDownload)
+
+				email.POST("/test", emailController.SendTest)
+				email.POST("/send", emailController.Send)
+
+				email.GET("/settings", middleware.AdminOnly(), emailController.GetSettings)
+				email.PUT("/settings", middleware.AdminOnly(), emailController.UpdateSettings)
+				email.POST("/broadcast", middleware.AdminOnly(), emailController.Broadcast)
+
+				// Resend webhook management (proxy to Resend API)
+				resend := email.Group("/resend")
+				resend.Use(middleware.AdminOnly())
+				{
+					resend.GET("/webhooks", resendWebhookController.List)
+					resend.POST("/webhooks", resendWebhookController.Create)
+					resend.GET("/webhooks/:id", resendWebhookController.Get)
+					resend.PUT("/webhooks/:id", resendWebhookController.Update)
+					resend.DELETE("/webhooks/:id", resendWebhookController.Remove)
+				}
+			}
+
+			// Homepage Content management (admin and editor access)
+			homepageContent := admin.Group("/homepage-content")
+			homepageContent.Use(middleware.EditorOrAdmin())
+			{
+				homepageContent.GET("", homepageContentController.GetHomepageContentsAdmin)
+				homepageContent.GET("/sections", homepageContentController.GetPredefinedSections)
+				homepageContent.GET("/b2b", storefrontSettingController.HomepageAdmin)
+				homepageContent.GET("/section/:section_key", homepageContentController.GetHomepageContentBySectionAdmin)
+				homepageContent.PUT("/section/:section_key", homepageContentController.UpsertHomepageContentBySection)
+				homepageContent.GET("/:id", homepageContentController.GetHomepageContent)
+				homepageContent.POST("", homepageContentController.CreateHomepageContent)
+				homepageContent.PUT("/:id", homepageContentController.UpdateHomepageContent)
+				homepageContent.DELETE("/:id", middleware.AdminOnly(), homepageContentController.DeleteHomepageContent)
+			}
+
+			// Company Profile management (admin and editor access)
+			companyProfile := admin.Group("/company-profile")
+			companyProfile.Use(middleware.EditorOrAdmin())
+			{
+				companyProfile.GET("", companyProfileController.GetCompanyProfileAdmin)
+				companyProfile.POST("", companyProfileController.UpsertCompanyProfile)
+				companyProfile.PUT("/:id", companyProfileController.UpdateCompanyProfile)
+				companyProfile.DELETE("/:id", middleware.AdminOnly(), companyProfileController.DeleteCompanyProfile)
+			}
+
+			// Storefront commercial promise (shipping / warranty / returns)
+			commercePolicy := admin.Group("/commerce-policy")
+			commercePolicy.Use(middleware.EditorOrAdmin())
+			{
+				commercePolicy.GET("", commercePolicyController.GetSettings)
+				commercePolicy.PUT("", commercePolicyController.UpdateSettings)
+			}
+
+			storefrontSettings := admin.Group("/storefront-settings")
+			storefrontSettings.Use(middleware.EditorOrAdmin())
+			{
+				storefrontSettings.GET("", storefrontSettingController.Get)
+				storefrontSettings.PUT("", storefrontSettingController.Update)
+			}
+
+			// Social media links (admin and editor access)
+			socialMedia := admin.Group("/social-media")
+			socialMedia.Use(middleware.EditorOrAdmin())
+			{
+				socialMedia.GET("", socialMediaSettingController.GetAdmin)
+				socialMedia.PUT("", socialMediaSettingController.Update)
+			}
+
+			// Contact Messages management (admin and editor access)
+			contacts := admin.Group("/contacts")
+			contacts.Use(middleware.EditorOrAdmin())
+			{
+				contacts.GET("", contactHandler.GetContacts)
+				contacts.GET("/stats", contactHandler.GetContactStats)
+				contacts.GET("/:id", contactHandler.GetContact)
+				contacts.POST("/:id/notify", contactHandler.RetryContactNotification)
+				contacts.PUT("/:id", contactHandler.UpdateContactStatus)
+				contacts.DELETE("/:id", middleware.AdminOnly(), contactHandler.DeleteContact)
+			}
+
+			// Coupon management (admin and editor access)
+			coupons := admin.Group("/coupons")
+			coupons.Use(middleware.EditorOrAdmin())
+			{
+				coupons.GET("", couponController.GetCoupons)
+				coupons.GET("/:id", couponController.GetCoupon)
+				coupons.GET("/:id/usage", couponController.GetCouponUsage)
+				coupons.POST("", couponController.CreateCoupon)
+				coupons.PUT("/:id", couponController.UpdateCoupon)
+				coupons.DELETE("/:id", middleware.AdminOnly(), couponController.DeleteCoupon)
+			}
+
+			// Customer management (admin and editor access)
+			customers := admin.Group("/customers")
+			customers.Use(middleware.EditorOrAdmin())
+			{
+				customers.GET("", customerController.GetAllCustomers)
+				customers.GET("/:id", customerController.GetCustomerByID)
+				customers.PUT("/:id/status", customerController.UpdateCustomerStatus)
+				customers.DELETE("/:id", middleware.AdminOnly(), customerController.DeleteCustomer)
+			}
+		}
+
+		// Public order endpoints (with optional customer authentication)
+		publicOrders := v1.Group("/orders")
+		publicOrders.Use(middleware.OptionalCustomerAuth()) // Try to authenticate if token present
+		{
+			publicOrders.POST("", middleware.IPRateLimit("order_create", 20, time.Hour), orderController.CreateOrder)
+			publicOrders.POST("/:id/paypal/create", middleware.IPRateLimit("paypal_create", 40, time.Hour), payPalPaymentController.CreatePayPalOrder)
+			publicOrders.POST("/:id/paypal/capture", middleware.IPRateLimit("paypal_capture", 60, time.Hour), payPalPaymentController.CapturePayPalOrder)
+			publicOrders.GET("/track/:orderNumber", middleware.IPRateLimit("order_track", 60, time.Hour), orderController.GetOrderByNumber) // Order tracking endpoint
+		}
+
+		// Customer authentication routes (public)
+		customer := v1.Group("/customer")
+		{
+			customer.POST("/register", middleware.IPRateLimit("customer_register", 10, time.Hour), customerController.Register)
+			customer.POST("/login", middleware.IPRateLimit("customer_login", 20, 15*time.Minute), customerController.Login)
+			customer.POST("/logout", customerController.Logout)
+			customer.POST("/password-reset/request", middleware.IPRateLimit("customer_pwreset_request", 5, time.Hour), customerController.RequestPasswordReset)
+			customer.POST("/password-reset/confirm", middleware.IPRateLimit("customer_pwreset_confirm", 10, time.Hour), customerController.ConfirmPasswordReset)
+
+			// Protected customer routes
+			customerProtected := customer.Group("")
+			customerProtected.Use(middleware.CustomerAuthMiddleware())
+			{
+				// Profile management
+				customerProtected.GET("/profile", customerController.GetProfile)
+				customerProtected.PUT("/profile", customerController.UpdateProfile)
+				customerProtected.POST("/change-password", customerController.ChangePassword)
+
+				// Customer orders
+				customerProtected.GET("/orders", orderController.GetMyOrders)
+				customerProtected.GET("/orders/:id", orderController.GetMyOrderDetails)
+
+				// Ticket/Support system
+				customerProtected.POST("/tickets", ticketController.CreateTicket)
+				customerProtected.GET("/tickets", ticketController.GetMyTickets)
+				customerProtected.GET("/tickets/:id", ticketController.GetTicketDetails)
+				customerProtected.POST("/tickets/:id/reply", ticketController.ReplyToTicket)
+			}
+		}
+
+		// Admin ticket management
+		adminTickets := admin.Group("/tickets")
+		adminTickets.Use(middleware.EditorOrAdmin())
+		{
+			adminTickets.GET("", ticketController.GetAllTickets)
+			adminTickets.GET("/:id", ticketController.GetAdminTicketDetails)
+			adminTickets.PUT("/:id", ticketController.UpdateTicketStatus)
+			adminTickets.POST("/:id/reply", ticketController.AdminReplyToTicket)
+		}
+	}
+
+	// Serve static files (uploaded images)
+	r.GET("/media-thumb/*path", mediaController.Thumbnail)
+	uploads := r.Group("/uploads")
+	uploads.Use(middleware.HotlinkProtectionMiddleware())
+	uploads.Use(func(c *gin.Context) {
+		// Resumable ZIP archives live under the persistent upload volume but are
+		// private job inputs, never public static assets.
+		if strings.HasPrefix(c.Request.URL.Path, "/uploads/.imports/") {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+		// Media filenames are SHA-256 based, so immutable caching is safe and
+		// avoids downloading the same gallery image on every admin page.
+		if strings.HasPrefix(c.Request.URL.Path, "/uploads/media/") {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		c.Next()
+	})
+	uploads.StaticFS("/", noDirectoryListingFS{fs: http.Dir(config.UploadPath())})
+}
+
+// noDirectoryListingFS wraps an http.FileSystem so that directory requests are
+// rejected instead of being rendered as an HTML index. Gin's StaticFS uses
+// http.FileServer, which happily lists any directory (including user upload
+// folders) - that leaks filenames to anonymous visitors.
+type noDirectoryListingFS struct {
+	fs http.FileSystem
+}
+
+func (n noDirectoryListingFS) Open(name string) (http.File, error) {
+	f, err := n.fs.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	if st, statErr := f.Stat(); statErr == nil && st.IsDir() {
+		// Only serve a directory if it explicitly contains an index.html;
+		// otherwise report not-found rather than enumerating its contents.
+		if idx, idxErr := n.fs.Open(strings.TrimSuffix(name, "/") + "/index.html"); idxErr == nil {
+			idx.Close()
+			return f, nil
+		}
+		f.Close()
+		return nil, os.ErrNotExist
+	}
+	return f, nil
+}

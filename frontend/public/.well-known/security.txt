@@ -1,0 +1,3 @@
+Contact: mailto:sales@vibocnc.com
+Preferred-Languages: en, zh
+Canonical: https://www.vibocnc.com/.well-known/security.txt

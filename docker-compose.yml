@@ -1,0 +1,152 @@
+name: sentient
+
+x-backend-environment: &backend-environment
+  GO_ENV: production
+  GIN_MODE: release
+  HOST: 0.0.0.0
+  PORT: 8080
+  DB_HOST: mysql
+  DB_PORT: 3306
+  DB_NAME: ${MYSQL_DATABASE:-sentientautoparts}
+  DB_USER: ${MYSQL_USER:-sentient}
+  DB_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+  DB_AUTO_MIGRATE: "true"
+  DB_LOG_LEVEL: error
+  SEED_DEFAULT_CONTENT: "false"
+  AUTOMATIC_PRODUCT_ENRICHMENT: "false"
+  STOREFRONT_THEME: legacy
+  CATALOG_DOMAIN: automotive
+  SITE_NAME: sentientautoparts
+  SITE_URL: ${SITE_URL:-http://localhost:8090}
+  BASE_URL: ${SITE_URL:-http://localhost:8090}
+  FRONTEND_URL: http://frontend:3000
+  CORS_ORIGINS: ${SITE_URL:-http://localhost:8090}
+  JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+  SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:?Set SETTINGS_ENCRYPTION_KEY in .env}
+  REVALIDATE_SECRET: ${REVALIDATE_SECRET:?Set REVALIDATE_SECRET in .env}
+  AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+  REDIS_ADDR: redis:6379
+  REDIS_DB: "1"
+  API_VERBOSE_ERRORS: "false"
+  AI_AGENT_TOOLS: "true"
+  AI_PROVIDER_ALLOW_PRIVATE_ADDRESSES: "false"
+
+services:
+  mysql:
+    image: mysql:8.0
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-sentientautoparts}
+      MYSQL_USER: ${MYSQL_USER:-sentient}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+    volumes: ["mysql_data:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysqladmin ping -h 127.0.0.1 -uroot --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  backend:
+    image: sentient-backend:local
+    build: ./backend
+    environment:
+      <<: *backend-environment
+      SEED_DEFAULT_ADMIN: ${SEED_DEFAULT_ADMIN:-true}
+      DEFAULT_ADMIN_USERNAME: ${DEFAULT_ADMIN_USERNAME:-admin}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:?Set DEFAULT_ADMIN_PASSWORD in .env}
+      DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL:-admin@example.com}
+      DEFAULT_ADMIN_FULLNAME: Administrator
+      RESET_DEFAULT_ADMIN_PASSWORD: "false"
+    volumes: ["uploads:/app/uploads"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+    restart: unless-stopped
+  init-catalog:
+    image: sentient-backend:local
+    build: ./backend
+    environment:
+      <<: *backend-environment
+      DB_AUTO_MIGRATE: "false"
+      DB_LOG_LEVEL: silent
+      SEED_DEFAULT_ADMIN: "false"
+    volumes: ["./data:/data:ro"]
+    depends_on:
+      backend: { condition: service_healthy }
+    command: ["/app/import-legacy", "-file", "/data/automotive-20260131.sql", "-profile", "automotive", "-apply"]
+    restart: "no"
+  frontend:
+    image: sentient-frontend:local
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://backend:8080
+        NEXT_PUBLIC_SITE_URL: ${SITE_URL:-http://localhost:8090}
+        NEXT_PUBLIC_SITE_NAME: ${SITE_NAME:-sentientautoparts}
+        NEXT_PUBLIC_SITE_DESCRIPTION: ${SITE_DESCRIPTION:-Automotive air conditioning parts and vehicle fitment catalog}
+        NEXT_PUBLIC_SITE_LOGO: ${SITE_LOGO:-}
+        NEXT_PUBLIC_B2B_MODE: ${B2B_MODE:-true}
+        NEXT_BUILD_NODE_OPTIONS: --max-old-space-size=3072
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      API_INTERNAL_URL: http://backend:8080
+      NEXT_PUBLIC_API_BASE_URL: http://backend:8080
+      SITE_URL: ${SITE_URL:-http://localhost:8090}
+      REVALIDATE_SECRET: ${REVALIDATE_SECRET:?Set REVALIDATE_SECRET in .env}
+      ENABLE_PUBLIC_LOCALE_REDIRECT: "false"
+    depends_on:
+      backend: { condition: service_healthy }
+      init-catalog: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+  nginx:
+    image: nginx:1.27-alpine
+    ports: ["${HTTP_PORT:-8090}:80"]
+    volumes: ["./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro"]
+    depends_on:
+      frontend: { condition: service_healthy, restart: true }
+      backend: { condition: service_healthy, restart: true }
+    restart: unless-stopped
+  import-legacy:
+    profiles: ["tools"]
+    image: sentient-backend:local
+    build: ./backend
+    environment:
+      <<: *backend-environment
+      SEED_DEFAULT_ADMIN: "false"
+      DB_AUTO_MIGRATE: "false"
+      DB_LOG_LEVEL: silent
+    volumes: ["./data:/data:ro"]
+    depends_on:
+      backend: { condition: service_healthy }
+    command: ["/app/import-legacy", "-file", "/data/automotive-20260131.sql", "-profile", "automotive", "-apply"]
+    restart: "no"
+
+volumes:
+  mysql_data:
+  redis_data:
+  uploads:

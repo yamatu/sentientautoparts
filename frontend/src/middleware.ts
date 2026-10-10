@@ -1,0 +1,448 @@
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import {
+  DEFAULT_PUBLIC_LOCALE,
+  PUBLIC_LOCALE_COOKIE,
+  PUBLIC_LOCALE_SELECTION_PARAM,
+  detectPublicLocale,
+  getLocaleFromPathname,
+  isPublicLocale,
+  isAutomaticLocaleRedirectAllowed,
+  isLocalizablePublicPath,
+  localizePublicPath,
+  normalizePublicLocale,
+  stripLocaleFromPathname,
+} from '@/lib/i18n/config';
+import { PUBLIC_CONTENT_SIGNAL_POLICY } from '@/lib/robots';
+
+// Define protected routes
+const protectedRoutes = ['/admin'];
+const authRoutes = ['/admin/login', '/admin/forgot-password'];
+
+// List of search engine crawlers
+const SEARCH_ENGINE_BOTS = [
+  'googlebot',
+  'bingbot',
+  'slurp', // Yahoo
+  'duckduckbot',
+  'baiduspider',
+  'yandexbot',
+  'facebookexternalhit',
+  'twitterbot',
+  'linkedinbot',
+  'whatsapp',
+  'telegrambot',
+  // AI search engine bots
+  'gptbot',
+  'chatgpt-user',
+  'perplexitybot',
+  'claudebot',
+  'anthropic-ai',
+  'google-extended',
+  'applebot',
+  'cohere-ai',
+];
+
+function isSearchEngineCrawler(userAgent: string): boolean {
+  const ua = userAgent.toLowerCase();
+  return SEARCH_ENGINE_BOTS.some(bot => ua.includes(bot));
+}
+
+const GEO_COUNTRY_HEADERS = [
+  'x-vercel-ip-country',
+  'cf-ipcountry',
+  'cloudfront-viewer-country',
+  'x-country-code',
+  'x-geo-country',
+] as const;
+
+function getRequestCountry(request: NextRequest): string | null {
+  for (const headerName of GEO_COUNTRY_HEADERS) {
+    const value = request.headers.get(headerName)?.split(',')[0].trim();
+    if (value) return value;
+  }
+  return null;
+}
+
+function saveLocalePreference(response: NextResponse, request: NextRequest, locale: string): void {
+  response.cookies.set(PUBLIC_LOCALE_COOKIE, locale, {
+    path: '/',
+    maxAge: 60 * 60 * 24 * 365,
+    sameSite: 'lax',
+    secure: request.nextUrl.protocol === 'https:',
+  });
+}
+
+function preventLocaleRedirectCaching(response: NextResponse): void {
+  response.headers.set('Cache-Control', 'private, no-store, no-cache, max-age=0, must-revalidate');
+  response.headers.set('Pragma', 'no-cache');
+  response.headers.set('Vary', 'Accept-Language, Cookie');
+}
+
+function getBackendBaseUrl(): string {
+  return (process.env.NEXT_PUBLIC_API_BASE_URL || 'http://backend:8080').replace(/\/+$/, '');
+}
+
+function getRequestHostname(request: NextRequest): string {
+  const forwardedHost = request.headers.get('x-forwarded-host')?.split(',')[0].trim();
+  const incomingHost = forwardedHost || request.headers.get('host') || request.nextUrl.host;
+  try {
+    return new URL(`http://${incomingHost}`).hostname.toLowerCase();
+  } catch {
+    return request.nextUrl.hostname.toLowerCase();
+  }
+}
+
+function getCanonicalHostname(): string {
+  const configured = process.env.SITE_URL || process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:8090';
+  try {
+    return new URL(configured).hostname.toLowerCase();
+  } catch {
+    return 'localhost';
+  }
+}
+
+// decodeJwtExpiryMs reads the exp claim without verifying the signature —
+// verification stays on the backend; this only improves routing so an
+// expired cookie is treated as "not logged in" instead of bouncing the user
+// between the login page and a 401-storming admin page.
+function decodeJwtExpiryMs(token: string): number | null {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const claims = JSON.parse(atob(normalized));
+    return typeof claims.exp === 'number' ? claims.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function isAdminTokenUsable(token: string | undefined): boolean {
+  if (!token) return false;
+  const expiry = decodeJwtExpiryMs(token);
+  // Unparseable tokens are treated as expired so the user reaches the login form.
+  if (expiry === null) return false;
+  return expiry > Date.now();
+}
+
+// The admin UI mirrors the session into two JS-readable cookies
+// (`auth_session` / `auth_token_expires`, set from src/lib/api.ts on login and
+// refresh) so client-side guards can decide what to render. This replicates
+// authUtils.isAuthenticated() on the server: when it returns false while the
+// HttpOnly admin_token is still usable, the two layers disagree about being
+// logged in — the exact mismatch that bounces the browser between /admin and
+// /admin/login forever, so treat it as a broken half-session.
+function hasClientAdminSession(request: NextRequest): boolean {
+  const expiresRaw = request.cookies.get('auth_token_expires')?.value;
+  if (expiresRaw) {
+    let expiresValue = expiresRaw;
+    try {
+      expiresValue = decodeURIComponent(expiresRaw);
+    } catch {
+      // Keep the raw value; Date.parse below decides.
+    }
+    const expiresAt = Date.parse(expiresValue);
+    if (!Number.isNaN(expiresAt)) return expiresAt > Date.now();
+  }
+  return request.cookies.get('auth_session')?.value === '1';
+}
+
+export async function middleware(request: NextRequest) {
+  const rawPathname = request.nextUrl.pathname;
+  if (rawPathname.startsWith('/legacy/') || rawPathname.startsWith('/uploads/') || rawPathname.startsWith('/images/')) return NextResponse.next();
+  // YourPHP query-style links and the former admin entry are explicitly
+  // translated; authentication is still enforced by the backend.
+  if (rawPathname === '/admin.php') return NextResponse.redirect(new URL('/admin', request.url), 301);
+  if (rawPathname === '/index.php' && request.nextUrl.searchParams.get('m') === 'Search') {
+    const u = new URL('/products', request.url); u.searchParams.set('q', request.nextUrl.searchParams.get('keyword') || '');
+    return NextResponse.redirect(u, 301);
+  }
+  if (rawPathname === '/en' || rawPathname.startsWith('/en/')) {
+    const url = request.nextUrl.clone();
+    url.pathname = rawPathname.slice(3) || '/';
+    return NextResponse.redirect(url, 308);
+  }
+  const pathLocale = getLocaleFromPathname(rawPathname);
+  const pathname = stripLocaleFromPathname(rawPathname);
+  const publicLocalesEnabled = process.env.ENABLE_PUBLIC_LOCALE_REDIRECT === 'true';
+  if (pathLocale && !publicLocalesEnabled) {
+    const url = request.nextUrl.clone();
+    url.pathname = pathname;
+    return NextResponse.redirect(url, 308);
+  }
+  const forwardedSiteLocale = request.headers.get('x-site-locale');
+  const locale = pathLocale
+    || (isPublicLocale(forwardedSiteLocale) ? normalizePublicLocale(forwardedSiteLocale) : DEFAULT_PUBLIC_LOCALE);
+  // The admin session JWT lives in an HttpOnly cookie. Next middleware runs on
+  // the server and can still read it, so route protection keeps working even
+  // though client-side JavaScript can no longer see the token.
+  const rawToken = request.cookies.get('admin_token')?.value;
+  const token = isAdminTokenUsable(rawToken) ? rawToken : undefined;
+  const userAgent = request.headers.get('user-agent') || '';
+
+  const requestedLocale = request.nextUrl.searchParams.get(PUBLIC_LOCALE_SELECTION_PARAM);
+  if (publicLocalesEnabled && isPublicLocale(requestedLocale) && isLocalizablePublicPath(pathname)) {
+    const url = request.nextUrl.clone();
+    url.pathname = localizePublicPath(pathname, requestedLocale);
+    url.searchParams.delete(PUBLIC_LOCALE_SELECTION_PARAM);
+    const response = NextResponse.redirect(url, 307);
+    saveLocalePreference(response, request, requestedLocale);
+    preventLocaleRedirectCaching(response);
+    return response;
+  }
+
+  if (pathLocale && !isLocalizablePublicPath(pathname)) {
+    const url = request.nextUrl.clone();
+    url.pathname = pathname;
+    return NextResponse.redirect(url, 308);
+  }
+
+
+  const rawSavedLocale = request.cookies.get(PUBLIC_LOCALE_COOKIE)?.value;
+  const savedLocale = isPublicLocale(rawSavedLocale) ? normalizePublicLocale(rawSavedLocale) : null;
+  const isCrawler = isSearchEngineCrawler(userAgent);
+  const detectedLocale = detectPublicLocale(
+    request.headers.get('accept-language'),
+    getRequestCountry(request),
+  );
+  const preferredLocale = savedLocale || detectedLocale;
+  const automaticLocale = preferredLocale;
+  // A localized URL is internally rewritten to its unprefixed route. Next may
+  // run middleware again for that rewritten request, so only auto-detect on an
+  // actual unprefixed browser URL. Otherwise /zh -> rewrite / -> redirect /zh
+  // becomes an infinite loop.
+  const isLocalizedInternalRewrite = Boolean(forwardedSiteLocale);
+  if (
+    process.env.ENABLE_PUBLIC_LOCALE_REDIRECT === 'true'
+    && !pathLocale
+    && !isLocalizedInternalRewrite
+    && isAutomaticLocaleRedirectAllowed(pathname)
+    && automaticLocale !== DEFAULT_PUBLIC_LOCALE
+    && isLocalizablePublicPath(pathname)
+    && !isCrawler
+  ) {
+    const url = request.nextUrl.clone();
+    url.pathname = localizePublicPath(pathname, automaticLocale);
+    const response = NextResponse.redirect(url, 307);
+    saveLocalePreference(response, request, preferredLocale);
+    preventLocaleRedirectCaching(response);
+    return response;
+  }
+
+  const requestHostname = getRequestHostname(request);
+  const canonicalHostname = getCanonicalHostname();
+  const alternateHostname = canonicalHostname.startsWith('www.')
+    ? canonicalHostname.slice(4)
+    : `www.${canonicalHostname}`;
+  if (requestHostname === alternateHostname) {
+    const canonicalUrl = request.nextUrl.clone();
+    canonicalUrl.protocol = 'https';
+    canonicalUrl.hostname = canonicalHostname;
+    canonicalUrl.port = '';
+    return NextResponse.redirect(canonicalUrl, 301);
+  }
+
+  const indexNowKeyMatch = pathname.match(/^\/([A-Za-z0-9_-]{8,128})\.txt$/);
+  if (indexNowKeyMatch) {
+    const requestedKey = indexNowKeyMatch[1];
+    try {
+      const res = await fetch(`${getBackendBaseUrl()}/api/v1/public/indexnow/key`, {
+        cache: 'no-store',
+      });
+      if (!res.ok) {
+        return new NextResponse('Not Found', {
+          status: 404,
+          headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+          },
+        });
+      }
+
+      const json = await res.json();
+      const configuredKey = String(json?.data?.key || '').trim();
+      if (!configuredKey || configuredKey !== requestedKey) {
+        return new NextResponse('Not Found', {
+          status: 404,
+          headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+          },
+        });
+      }
+
+      return new NextResponse(configuredKey, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        },
+      });
+    } catch {
+      return new NextResponse('Not Found', {
+        status: 404,
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        },
+      });
+    }
+  }
+
+  // Redirect legacy product sitemap URLs:
+  // /sitemap-products-1.xml -> /sitemap-products/1.xml
+  const legacySitemapMatch = pathname.match(/^\/sitemap-products-(\d+)\.xml$/);
+  if (legacySitemapMatch) {
+    const url = request.nextUrl.clone();
+    url.pathname = `/sitemap-products/${legacySitemapMatch[1]}.xml`;
+    return NextResponse.redirect(url, 301);
+  }
+
+  // Serve /sitemap-products/:page.xml by rewriting to an internal route
+  // /sitemap-products/1.xml -> /sitemap-products/1 (keeps .xml in the URL)
+  const productsSitemapMatch = pathname.match(/^\/sitemap-products\/(\d+)\.xml$/);
+  if (productsSitemapMatch) {
+    const url = request.nextUrl.clone();
+    url.pathname = `/sitemap-products/${productsSitemapMatch[1]}`;
+    return NextResponse.rewrite(url);
+  }
+
+  // Handle product URL redirects for SEO-friendly URLs
+  // Redirect old format /products/[sku] to new format /products/[sku]-[slug]
+  if (pathname.match(/^\/products\/[A-Z0-9][A-Z0-9\-._]*$/i) && !pathname.includes('-')) {
+    // This looks like an old SKU-only URL, but we need to check if it exists first
+    // For now, let the route handler deal with it to avoid complexity here
+  }
+
+  // This fork keeps literal SKU prefixes. Only verified PHP aliases redirect
+  // through the storefront resolver; no industrial-brand prefix is stripped.
+
+  // Check if the current path is a protected route
+  const isProtectedRoute = protectedRoutes.some(route =>
+    pathname.startsWith(route) && !authRoutes.some(authRoute => pathname.startsWith(authRoute))
+  );
+
+  // Check if the current path is an auth route
+  const isAuthRoute = authRoutes.some(route => pathname.startsWith(route));
+
+  // Broken half-session: the HttpOnly admin_token is still usable but the
+  // JS-visible mirror is gone/expired, so the client treats the visit as
+  // "logged out" while this middleware keeps treating it as "logged in".
+  // That mismatch ping-pongs the browser between /admin and /admin/login —
+  // normalise it below by clearing the stale cookies instead of bouncing.
+  const isBrokenAdminSession = Boolean(token) && !hasClientAdminSession(request);
+
+  // If accessing a protected route without a usable token — or in the broken
+  // half-session state — redirect to login and drop the stale cookies so the
+  // login page is reachable immediately.
+  if (isProtectedRoute && (!token || isBrokenAdminSession)) {
+    const loginUrl = new URL('/admin/login', request.url);
+    loginUrl.searchParams.set('redirect', pathname);
+    const redirectResponse = NextResponse.redirect(loginUrl);
+    if (rawToken) {
+      redirectResponse.cookies.delete('admin_token');
+      redirectResponse.cookies.delete('auth_session');
+      redirectResponse.cookies.delete('auth_token_expires');
+    }
+    return redirectResponse;
+  }
+
+  // If accessing auth route with a token and an agreeing client session,
+  // redirect to admin dashboard. In the broken half-session case fall through
+  // instead so the login page renders (stale cookies are cleared below).
+  if (isAuthRoute && token && !isBrokenAdminSession) {
+    return NextResponse.redirect(new URL('/admin', request.url));
+  }
+
+  // Create response with SEO optimizations
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-site-locale', locale);
+  requestHeaders.set('x-site-pathname', pathname);
+
+  const response = pathLocale
+    ? NextResponse.rewrite(
+        (() => {
+          const url = request.nextUrl.clone();
+          url.pathname = pathname;
+          return url;
+        })(),
+        { request: { headers: requestHeaders } },
+      )
+    : NextResponse.next({ request: { headers: requestHeaders } });
+
+  // The broken half-session reached the login page: clear the stale HttpOnly
+  // cookie on this response so the next login starts from a clean slate.
+  if (isAuthRoute && isBrokenAdminSession) {
+    response.cookies.delete('admin_token');
+    response.cookies.delete('auth_session');
+    response.cookies.delete('auth_token_expires');
+  }
+
+  // Explicit language selection is persisted by useLocaleNavigation and the
+  // site_locale redirect above. Plain locale URL requests do not need Set-Cookie;
+  // keeping them cookie-free allows shared CDN caching.
+
+  // Do not vary cache policy by user agent. Serving the same cacheable HTML to
+  // users and crawlers keeps rendering fast and avoids crawler-only behavior.
+
+  // Add security headers
+  // Allow the public homepage to render inside the same-origin admin preview.
+  response.headers.set('X-Frame-Options', 'SAMEORIGIN');
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  response.headers.set(
+    'Content-Security-Policy',
+    "base-uri 'self'; frame-ancestors 'self'; object-src 'none'"
+  );
+
+  // Order lookups can contain customer data and must never enter a search index.
+  if (pathname.startsWith('/orders/track/')) {
+    response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
+  }
+
+  if (
+    pathname.startsWith('/admin') ||
+    pathname.startsWith('/account') ||
+    pathname.startsWith('/checkout') ||
+    pathname === '/register' ||
+    pathname === '/forgot-password'
+  ) {
+    response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
+  }
+
+  if (request.nextUrl.searchParams.get('admin_preview') === '1') {
+    response.headers.set('Cache-Control', 'private, no-store, max-age=0');
+    response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  }
+
+  if (isLocalizablePublicPath(pathname) && !response.headers.has('X-Robots-Tag')) {
+    response.headers.set('Content-Signal', PUBLIC_CONTENT_SIGNAL_POLICY);
+  }
+
+  return response;
+}
+
+export const config = {
+  matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - api (API routes)
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - public folder
+     */
+    '/((?!api|_next/static|_next/image|favicon.ico|public).*)',
+  ],
+};

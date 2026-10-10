@@ -1,0 +1,782 @@
+package controllers
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"fanuc-backend/config"
+	"fanuc-backend/models"
+	"fanuc-backend/services"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+const (
+	aiSEOCategorySelectionMode = "category_optimization"
+	aiSEOCategoryOptionsMarker = "[[VIBOCNC_CATEGORY_JOB_OPTIONS="
+)
+
+var categoryOptimizationJobCreationMu sync.Mutex
+
+type aiSEOCategoryJobRequest struct {
+	ProductIDs              []uint `json:"product_ids"`
+	Limit                   int    `json:"limit"`
+	CategoryID              uint   `json:"category_id"`
+	IncludeDescendants      bool   `json:"include_descendants"`
+	Brand                   string `json:"brand"`
+	Search                  string `json:"search"`
+	IncludeInactive         bool   `json:"include_inactive"`
+	Status                  string `json:"status"`
+	Featured                string `json:"featured"`
+	AISEOStatus             string `json:"ai_seo_status"`
+	UseWebSearch            *bool  `json:"use_web_search"`
+	CreateMissingCategories *bool  `json:"create_missing_categories"`
+	// AllowNewProductTypes permits a product type the taxonomy has never seen to
+	// become a new public category node. It defaults to false because the type
+	// name can originate from an AI answer; without it an unknown type is
+	// reported for review instead of being published as a new category.
+	AllowNewProductTypes *bool `json:"allow_new_product_types"`
+	ActivateResolved     *bool `json:"activate_resolved"`
+	UseLLMFallback       *bool `json:"use_llm_fallback"`
+	RepairContent        *bool `json:"repair_content"`
+	// UncategorizedOnly restricts the selection to products that still have no
+	// category (category_id = 0). It is how the administrator (directly or via
+	// an approved AI review proposal) repairs the unclassified backlog without
+	// touching already-categorized products.
+	UncategorizedOnly bool `json:"uncategorized_only"`
+	// ReworkOnly replaces the filter selection with the classification audit:
+	// only products that are misplaced, uncategorized, unresolved-inactive, or
+	// AI-SEO-failed are queued.
+	ReworkOnly bool `json:"rework_only"`
+}
+
+type aiSEOCategoryJobOptions struct {
+	UseWebSearch            bool `json:"use_web_search"`
+	CreateMissingCategories bool `json:"create_missing_categories"`
+	AllowNewProductTypes    bool `json:"allow_new_product_types"`
+	ActivateResolved        bool `json:"activate_resolved"`
+	UseLLMFallback          bool `json:"use_llm_fallback"`
+	RepairContent           bool `json:"repair_content"`
+}
+
+// StartCategoryOptimizationJob creates a taxonomy task in the existing AI job
+// queue. Ordinary category runs remain category-only; rework runs can opt into
+// a second AI content-quality pass after the category is verified.
+func (ac *AIAgentController) StartCategoryOptimizationJob(c *gin.Context) {
+	var req aiSEOCategoryJobRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Message: "Invalid category optimization request", Error: err.Error()})
+		return
+	}
+	db := config.GetDB()
+	if db == nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Message: "Database connection failed"})
+		return
+	}
+	job, err := startCategoryOptimizationJobCore(db, req, c.GetUint("user_id"))
+	if err != nil {
+		var jobErr *categoryJobError
+		if errors.As(err, &jobErr) {
+			c.JSON(categoryJobErrorStatus(jobErr.kind), models.APIResponse{Success: false, Message: jobErr.message, Error: jobErr.detail})
+			return
+		}
+		if errors.Is(err, errAISEOProductsPending) || errors.Is(err, errAISEOJobCapacity) {
+			c.JSON(http.StatusConflict, models.APIResponse{Success: false, Message: err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Message: "Failed to create category optimization task", Error: err.Error()})
+		return
+	}
+	dispatchQueuedAISEOJobsAsync()
+	c.JSON(http.StatusAccepted, models.APIResponse{Success: true, Message: "Category optimization task started", Data: job})
+}
+
+// categoryJobError keeps the HTTP-specific message for a category task
+// creation failure while errors.Is still sees the sentinel kind underneath.
+type categoryJobError struct {
+	kind    error
+	message string
+	detail  string
+}
+
+func (e *categoryJobError) Error() string {
+	if e.detail != "" {
+		return e.message + ": " + e.detail
+	}
+	return e.message
+}
+
+func (e *categoryJobError) Unwrap() error { return e.kind }
+
+func categoryJobErrorStatus(kind error) int {
+	switch {
+	case errors.Is(kind, errCategoryJobAIConfig):
+		return http.StatusServiceUnavailable
+	case errors.Is(kind, errCategoryJobNoCandidates), errors.Is(kind, errCategoryJobInvalidLimit), errors.Is(kind, errCategoryJobSelection):
+		return http.StatusBadRequest
+	case errors.Is(kind, errAISEOProductsPending), errors.Is(kind, errAISEOJobCapacity):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// Category task startup failures, distinguishable with errors.Is. The HTTP
+// layer maps them onto status codes; the AI apply flow surfaces the message.
+var (
+	errCategoryJobInvalidLimit = errors.New("category optimization limit is invalid")
+	errCategoryJobNoCandidates = errors.New("no products matched the requested category optimization scope")
+	errCategoryJobAIConfig     = errors.New("AI assistant must be configured and enabled before product descriptions can be repaired")
+	errCategoryJobSelection    = errors.New("category optimization selection failed")
+)
+
+// startCategoryOptimizationJobCore creates the queued category optimization
+// task. It is shared by the admin endpoint above and the AI assistant's apply
+// flow, so both paths select candidates, encode the options and record the
+// task identically. The caller starts the worker after any surrounding
+// transaction has committed.
+func startCategoryOptimizationJobCore(db *gorm.DB, req aiSEOCategoryJobRequest, createdByID uint) (*models.AIAgentSEOJob, error) {
+	if !validAISEOJobLimit(req.Limit) {
+		return nil, &categoryJobError{kind: errCategoryJobInvalidLimit, message: "Category optimization limit must be non-negative (0 = all)"}
+	}
+	opts := aiSEOCategoryJobOptions{
+		UseWebSearch:            optionalBool(req.UseWebSearch, true),
+		CreateMissingCategories: optionalBool(req.CreateMissingCategories, true),
+		AllowNewProductTypes:    optionalBool(req.AllowNewProductTypes, false),
+		ActivateResolved:        optionalBool(req.ActivateResolved, true),
+		UseLLMFallback:          optionalBool(req.UseLLMFallback, true),
+		RepairContent:           optionalBool(req.RepairContent, req.ReworkOnly),
+	}
+	if opts.RepairContent {
+		setting, _, apiKey, configErr := loadAIAgentConfigWithProfile()
+		if configErr != nil || !setting.Enabled || apiKey == "" {
+			detail := ""
+			if configErr != nil {
+				detail = configErr.Error()
+			}
+			return nil, &categoryJobError{kind: errCategoryJobAIConfig, message: errCategoryJobAIConfig.Error(), detail: detail}
+		}
+	}
+
+	products, err := findCategoryOptimizationCandidates(db, req, opts.RepairContent)
+	if err != nil {
+		return nil, &categoryJobError{kind: errCategoryJobSelection, message: "Failed to select category optimization products", detail: err.Error()}
+	}
+	if len(products) == 0 {
+		message := "No products matched the requested category optimization scope"
+		if req.ReworkOnly {
+			message = "The classification audit found no products that need rework"
+		}
+		return nil, &categoryJobError{kind: errCategoryJobNoCandidates, message: message}
+	}
+
+	prompt, err := encodeAISEOCategoryJobOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+	return createCategoryOptimizationJob(db, products, prompt, createdByID)
+}
+
+func optionalBool(value *bool, fallback bool) bool {
+	if value == nil {
+		return fallback
+	}
+	return *value
+}
+
+func findCategoryOptimizationCandidates(db *gorm.DB, req aiSEOCategoryJobRequest, repairContent bool) ([]aiSEOProductRef, error) {
+
+	uniqueIDs := uniqueProductIDs(req.ProductIDs)
+	if len(uniqueIDs) > maxAISEOCandidateProducts {
+		return nil, errors.New("choose at most 30000 unique products")
+	}
+	ids := sortedLimitedProductIDs(uniqueIDs, req.Limit)
+	limit := req.Limit
+	if limit == 0 {
+		limit = -1
+	}
+	if len(ids) > 0 {
+		if limit > len(ids) {
+			limit = len(ids)
+		}
+	}
+
+	query := db.Model(&models.Product{}).Select("products.id", "products.sku").Where("products.disable_auto_seo = ?", false)
+	if len(ids) > 0 {
+		query = query.Where("products.id IN ?", ids)
+	}
+	query = applyCategoryOptimizationProductStatus(query, req.Status, req.IncludeInactive)
+	switch strings.ToLower(strings.TrimSpace(req.Featured)) {
+	case "true", "1", "featured":
+		query = query.Where("products.is_featured = ?", true)
+	case "false", "0", "not_featured":
+		query = query.Where("products.is_featured = ?", false)
+	}
+	if req.CategoryID > 0 {
+		categoryIDs := []uint{req.CategoryID}
+		if req.IncludeDescendants {
+			descendants, err := getDescendantCategoryIDs(db, req.CategoryID)
+			if err != nil {
+				return nil, err
+			}
+			if len(descendants) > 0 {
+				categoryIDs = descendants
+			}
+		}
+		query = query.Where("products.category_id IN ?", categoryIDs)
+	}
+	if brand := truncateRunes(strings.TrimSpace(req.Brand), 100); brand != "" {
+		query = query.Where("LOWER(products.brand) = LOWER(?)", brand)
+	}
+	if req.UncategorizedOnly {
+		query = query.Where("products.category_id = 0")
+	}
+	if search := truncateRunes(strings.TrimSpace(req.Search), 120); search != "" {
+		like := "%" + search + "%"
+		query = query.Where("products.sku LIKE ? OR products.name LIKE ? OR products.description LIKE ? OR products.part_number LIKE ? OR products.model LIKE ?", like, like, like, like, like)
+	}
+	switch strings.ToLower(strings.TrimSpace(req.AISEOStatus)) {
+	case "optimized":
+		query = query.Where("products.ai_seo_status = ?", "optimized")
+	case "not_optimized":
+		query = query.Where("products.ai_seo_status IS NULL OR products.ai_seo_status = ''")
+	case "running":
+		query = query.Where("products.ai_seo_status = ?", "running")
+	case "failed":
+		query = query.Where("products.ai_seo_status = ?", "failed")
+	}
+	pendingIDs := db.Model(&models.AIAgentSEOJobItem{}).
+		Select("product_id").
+		Where("status IN ?", []string{"queued", "running"})
+	query = query.Where("products.id NOT IN (?)", pendingIDs).
+		Order("products.id ASC").
+		Limit(limit)
+
+	var products []aiSEOProductRef
+	if err := query.Find(&products).Error; err != nil {
+		return nil, err
+	}
+	if len(ids) > 0 && len(products) != len(ids) {
+		return nil, errors.New("one or more selected products are inactive, missing, or already belong to another running task")
+	}
+	return products, nil
+}
+
+// findCategoryReworkCandidates turns the classification audit into a job
+// selection. The audit already skips products held by queued or running job
+// items, so the returned list can always be enqueued.
+func findCategoryReworkCandidates(db *gorm.DB, limit int, repairContent bool) ([]aiSEOProductRef, error) {
+	var audit *services.ProductClassificationAuditResult
+	var err error
+	if repairContent {
+		audit, err = services.AuditProductRework(db, limit)
+	} else {
+		audit, err = services.AuditProductClassifications(db, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(audit.ProductIDs) == 0 {
+		return nil, nil
+	}
+	products := make([]aiSEOProductRef, 0, len(audit.ProductIDs))
+	for start := 0; start < len(audit.ProductIDs); start += 1000 {
+		end := start + 1000
+		if end > len(audit.ProductIDs) {
+			end = len(audit.ProductIDs)
+		}
+		var batch []aiSEOProductRef
+		if err := db.Model(&models.Product{}).
+			Select("products.id", "products.sku").
+			Where("products.id IN ?", audit.ProductIDs[start:end]).
+			Order("products.id ASC").
+			Find(&batch).Error; err != nil {
+			return nil, err
+		}
+		products = append(products, batch...)
+	}
+	return products, nil
+}
+
+func applyCategoryOptimizationProductStatus(query *gorm.DB, status string, includeInactive bool) *gorm.DB {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "active":
+		return query.Where("products.is_active = ?", true)
+	case "inactive":
+		return query.Where("products.is_active = ?", false)
+	case "all":
+		return query
+	default:
+		if !includeInactive {
+			return query.Where("products.is_active = ?", true)
+		}
+		return query
+	}
+}
+
+func encodeAISEOCategoryJobOptions(opts aiSEOCategoryJobOptions) (string, error) {
+	raw, err := json.Marshal(opts)
+	if err != nil {
+		return "", err
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(raw)
+	return "Automatically verify and optimize product categories by brand and product type.\n\n" + aiSEOCategoryOptionsMarker + encoded + "]]", nil
+}
+
+func decodeAISEOCategoryJobOptions(prompt string) (aiSEOCategoryJobOptions, error) {
+	start := strings.LastIndex(prompt, aiSEOCategoryOptionsMarker)
+	if start < 0 {
+		return aiSEOCategoryJobOptions{}, errors.New("category optimization options are missing")
+	}
+	start += len(aiSEOCategoryOptionsMarker)
+	end := strings.Index(prompt[start:], "]]")
+	if end < 0 {
+		return aiSEOCategoryJobOptions{}, errors.New("category optimization options are malformed")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(prompt[start : start+end])
+	if err != nil {
+		return aiSEOCategoryJobOptions{}, err
+	}
+	var opts aiSEOCategoryJobOptions
+	if err := json.Unmarshal(raw, &opts); err != nil {
+		return aiSEOCategoryJobOptions{}, err
+	}
+	return opts, nil
+}
+
+func createCategoryOptimizationJob(db *gorm.DB, products []aiSEOProductRef, prompt string, createdByID uint) (*models.AIAgentSEOJob, error) {
+	if len(products) == 0 {
+		return nil, errors.New("category optimization jobs must contain at least one product")
+	}
+	job := &models.AIAgentSEOJob{
+		ID:            uuid.NewString(),
+		Prompt:        prompt,
+		SelectionMode: aiSEOCategorySelectionMode,
+		Status:        "queued",
+		Total:         len(products),
+		CreatedByID:   createdByID,
+	}
+	items := make([]models.AIAgentSEOJobItem, 0, len(products))
+	for _, product := range products {
+		items = append(items, models.AIAgentSEOJobItem{JobID: job.ID, ProductID: product.ID, SKU: product.SKU, Status: "queued"})
+	}
+	categoryOptimizationJobCreationMu.Lock()
+	defer categoryOptimizationJobCreationMu.Unlock()
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		// Lock the same singleton database row used by ordinary AI SEO job
+		// creation so overlap checks are serialized across server processes.
+		setting, err := getAIAgentSettingForUpdate(tx)
+		if err != nil {
+			return err
+		}
+		// Pin the profile chosen at creation so the LLM fallback keeps using
+		// the same provider even if the administrator switches later.
+		profile, err := getActiveAIAgentProfileForUpdate(tx, setting)
+		if err != nil {
+			return err
+		}
+		pinAIAgentSEOJobProfile(job, setting, profile)
+		if err := ensureAISEOJobCapacity(tx, aiSEOCategorySelectionMode); err != nil {
+			return err
+		}
+		if err := ensureNoPendingAISEOProducts(tx, products); err != nil {
+			return err
+		}
+		if err := tx.Create(job).Error; err != nil {
+			return err
+		}
+		return tx.CreateInBatches(&items, 500).Error
+	}); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+func processCategoryOptimizationJob(jobID, workerToken, prompt string) {
+	db := config.GetDB()
+	opts, err := decodeAISEOCategoryJobOptions(prompt)
+	if err != nil {
+		failQueuedCategoryOptimizationItems(jobID, err.Error())
+		finishAIAgentSEOJob(jobID, workerToken, "failed", err.Error())
+		return
+	}
+	// The LLM fallback is optional: category jobs still run rules + web
+	// verification when no AI profile is configured or the assistant is off.
+	var llmSetting *models.AIAgentSetting
+	llmAPIKey := ""
+	if opts.RepairContent || opts.UseLLMFallback {
+		profileID, profileErr := loadAIAgentSEOJobProfileID(db, jobID)
+		if profileErr == nil {
+			if setting, _, apiKey, configErr := loadAIAgentConfigForProfile(profileID); configErr == nil && setting.Enabled && apiKey != "" {
+				llmSetting = setting
+				llmAPIKey = apiKey
+			}
+		}
+	}
+	if opts.RepairContent && llmSetting == nil {
+		finishAIAgentSEOJob(jobID, workerToken, "paused", "AI 配置不可用，请修复后继续 / AI configuration unavailable; fix and resume. Product data retained.")
+		return
+	}
+	workers := maxAutoCategoryOptimizationWorkers
+	workerErrors := make(chan error, workers)
+	if workers > 0 {
+		work := make(chan models.AIAgentSEOJobItem)
+		var wg sync.WaitGroup
+		for index := 0; index < workers; index++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for item := range work {
+					if err := processCategoryOptimizationItem(context.Background(), jobID, workerToken, item, opts, llmSetting, llmAPIKey); err != nil {
+						select {
+						case workerErrors <- err:
+						default:
+						}
+					}
+				}
+			}()
+		}
+		streamErr := streamAISEOItems(db, jobID, workerToken, work)
+		close(work)
+		wg.Wait()
+		if streamErr != nil {
+			finishAIAgentSEOJob(jobID, workerToken, "paused", "Queue read failed; resume after checking database")
+			return
+		}
+	}
+	close(workerErrors)
+	if !isAISEOJobRunning(db, jobID, workerToken) {
+		return
+	}
+	errorMessages := make([]string, 0, workers)
+	for workerErr := range workerErrors {
+		errorMessages = append(errorMessages, workerErr.Error())
+	}
+	finished, err := finalizeCategoryOptimizationJob(db, jobID, workerToken, errorMessages)
+	if err != nil {
+		finishAIAgentSEOJob(jobID, workerToken, "failed", "Could not finalize category task: "+err.Error())
+		return
+	}
+	if finished {
+		publishAIAgentSEOJobCompletion(jobID)
+	}
+}
+
+func processCategoryOptimizationItem(ctx context.Context, jobID, workerToken string, item models.AIAgentSEOJobItem, opts aiSEOCategoryJobOptions, llmSetting *models.AIAgentSetting, llmAPIKey string) error {
+	db := config.GetDB()
+	if !isAISEOJobRunning(db, jobID, workerToken) {
+		return nil
+	}
+	claim := db.Model(&models.AIAgentSEOJobItem{}).
+		Where("id = ? AND status = ?", item.ID, "queued").
+		Where("EXISTS (SELECT 1 FROM ai_agent_seo_jobs WHERE id = ? AND status = ? AND worker_token = ?)", jobID, "running", workerToken).
+		Update("status", "running")
+	if claim.Error != nil {
+		return fmt.Errorf("failed to claim category task item %d: %w", item.ID, claim.Error)
+	}
+	if claim.RowsAffected == 0 {
+		return nil
+	}
+	var product models.Product
+	if err := db.Preload("Category").First(&product, item.ProductID).Error; err != nil {
+		failCategoryOptimizationItem(jobID, workerToken, item, err)
+		return nil
+	}
+	serviceOpts := services.ProductCategoryOptimizationOptions{
+		UseWebSearch:            opts.UseWebSearch,
+		CreateMissingCategories: opts.CreateMissingCategories,
+		AllowNewProductTypes:    opts.AllowNewProductTypes,
+		ActivateResolved:        opts.ActivateResolved,
+		AuditJobID:              jobID,
+		BeforeWrite: func(tx *gorm.DB) error {
+			var job models.AIAgentSEOJob
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("status", "worker_token").First(&job, "id = ?", jobID).Error; err != nil {
+				return err
+			}
+			if job.WorkerToken != workerToken || (job.Status != "running" && job.Status != "paused") {
+				return errors.New("category optimization task is no longer active")
+			}
+			return nil
+		},
+	}
+	setAISEOItemProgress(db, item.ID, "调用 AI 核验品牌、型号与分类证据 / AI classification review")
+	var result services.ProductCategoryOptimizationResult
+	reviewProposal := services.ClassificationProposal{}
+	llmNote := ""
+	result = services.OptimizeProductCategory(ctx, db, product, serviceOpts)
+	if !services.AutomotiveMode() && result.Status == "unresolved" && opts.UseLLMFallback && llmSetting != nil && llmAPIKey != "" {
+		model := services.ClassificationModel(product)
+		// The evidence OptimizeProductCategory already fetched is reused, so the
+		// classifier never triggers a second public lookup for the same product.
+		aiProposal, err := classifyProductCategoryWithLLM(ctx, llmSetting, llmAPIKey, product, model, result.Evidence)
+		if err != nil {
+			// A provider outage is not a classification decision: keep the
+			// deterministic outcome and let the item report the network problem.
+			reviewProposal = services.UnresolvedProposal(product, model, result.Inference).WithReason(err.Error())
+		} else {
+			reviewProposal = aiProposal
+			if aiProposal.Confirmed {
+				setAISEOItemProgress(db, item.ID, "AI 核验通过，匹配现有分类 / Matching verified category")
+				result = services.ApplyProductCategoryInference(ctx, db, product, aiProposal.Inference, serviceOpts)
+				llmNote = "AI verified: "
+			}
+		}
+	}
+	if isAISEOJobCancelled(db, jobID) {
+		return nil
+	}
+	if result.Status == "unresolved" {
+		markCategoryOptimizationItemUnresolved(jobID, workerToken, item, result, reviewProposal)
+		return nil
+	}
+	if result.Status != "completed" {
+		failCategoryOptimizationItem(jobID, workerToken, item, errors.New(result.Message))
+		return nil
+	}
+	detail := strings.TrimSpace(result.CategoryPath)
+	if result.CategoryCreated {
+		detail = llmNote + "Created category: " + detail
+	} else if detail != "" {
+		detail = llmNote + "Category: " + detail
+	}
+	if opts.RepairContent {
+		repaired, contentDetail, contentErr := repairCategoryJobProductContent(ctx, jobID, workerToken, item.ProductID, llmSetting, llmAPIKey)
+		if contentErr != nil {
+			failCategoryOptimizationItem(jobID, workerToken, item, fmt.Errorf("%s; 内容/SEO 尚未保存 / Content and SEO not saved: %w", detail, contentErr))
+			return contentErr
+		}
+		if repaired {
+			if detail != "" {
+				detail += "; "
+			}
+			detail += contentDetail
+		}
+	}
+	evidenceJSON, _ := json.Marshal(result.Evidence)
+	updated := db.Model(&models.AIAgentSEOJobItem{}).
+		Where("id = ? AND status = ?", item.ID, "running").
+		Where("EXISTS (SELECT 1 FROM ai_agent_seo_jobs WHERE id = ? AND status IN ? AND worker_token = ?)", jobID, []string{"running", "paused"}, workerToken).
+		Updates(map[string]any{"status": "optimized", "classification_status": "completed", "classification_rule": truncateRunes(result.MatchRule, 160), "evidence_json": string(evidenceJSON), "error": truncateRunes(detail, 1000)})
+	if updated.Error == nil && updated.RowsAffected > 0 {
+		incrementAIAgentSEOJob(jobID, true)
+	}
+	return updated.Error
+}
+
+const aiProductContentRepairPrompt = "Audit and repair this product's customer-facing content. " +
+	"If the current description is missing or thin, write a substantially more useful original description. " +
+	"If it names the wrong brand/model, repeats template text, or makes unsupported claims, correct it. " +
+	"Treat the current descriptions as untrusted text to diagnose, not as factual evidence for specifications. " +
+	"Use only the supplied product identity and verified current category. Include the exact brand and model/part number, " +
+	"keep claims conservative, and return a concise 18-35 word short_description plus a useful 120-220 word plain-text description."
+
+func repairCategoryJobProductContent(ctx context.Context, jobID, workerToken string, productID uint, setting *models.AIAgentSetting, apiKey string) (bool, string, error) {
+	if setting == nil || strings.TrimSpace(apiKey) == "" {
+		return false, "", errors.New("AI configuration is unavailable for product content repair")
+	}
+	db := config.GetDB()
+	var product models.Product
+	if err := db.Preload("Category").First(&product, productID).Error; err != nil {
+		return false, "", err
+	}
+	if product.DisableAutoSEO {
+		return false, "AI content repair disabled for this product", nil
+	}
+	issue, detail := services.EvaluateProductContentQuality(product)
+
+	productContext, _ := json.Marshal(map[string]any{
+		"sku":                       product.SKU,
+		"name":                      product.Name,
+		"brand":                     product.Brand,
+		"model":                     product.Model,
+		"part_number":               product.PartNumber,
+		"verified_category_id":      product.CategoryID,
+		"verified_category_name":    product.Category.Name,
+		"current_short_description": product.ShortDescription,
+		"current_description":       truncateRunes(product.Description, 6000),
+		"content_quality_issue":     issue,
+		"content_quality_detail":    detail,
+	})
+	prompt := applyAISEOFocusToPrompt(aiProductContentRepairPrompt+" Also validate and repair corrected_name, meta_title, meta_description and meta_keywords. Retain every already accurate value. Never invent specifications.", []string{"seo", "content"})
+	messages := []aiChatMessage{
+		{Role: "system", Content: aiSEOSystemPrompt},
+		{Role: "user", Content: "ADMINISTRATOR_SEO_INSTRUCTION:\n" + prompt + "\n\nPRODUCT_REFERENCE:\n" + string(productContext)},
+	}
+	setAISEOItemProgress(db, itemIDForProduct(db, jobID, productID), "AI 审核名称、简介、描述及 SEO / AI content and SEO review")
+	// The slot is taken by the provider call itself (see ai_task_limiter.go).
+	aiSEOProviderSlots <- struct{}{}
+	output, err := requestAIAgentSEOOutput(ctx, setting, apiKey, messages, 2200)
+	<-aiSEOProviderSlots
+	if err != nil {
+		return false, "", err
+	}
+	output = completeAISEOOutput(output, product)
+	proposed := product
+	proposed.ShortDescription = output.ShortDescription
+	proposed.Description = output.Description
+	if remainingIssue, remainingDetail := services.EvaluateProductContentQuality(proposed); remainingIssue != "" {
+		return false, "", fmt.Errorf("AI content still fails quality check (%s): %s", remainingIssue, remainingDetail)
+	}
+	now := time.Now().UTC()
+	err = db.Transaction(func(tx *gorm.DB) error {
+		var job models.AIAgentSEOJob
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("status", "worker_token").First(&job, "id = ?", jobID).Error; err != nil {
+			return err
+		}
+		if job.WorkerToken != workerToken || (job.Status != "running" && job.Status != "paused") {
+			return errors.New("category optimization task is no longer active")
+		}
+		return tx.Model(&models.Product{}).Where("id = ?", productID).Updates(map[string]any{
+			"name":                       output.CorrectedName,
+			"meta_title":                 output.MetaTitle,
+			"meta_description":           output.MetaDescription,
+			"meta_keywords":              output.MetaKeywords,
+			"ai_seo_status":              "optimized",
+			"ai_seo_optimized_at":        &now,
+			"ai_seo_optimization_job_id": jobID,
+			"short_description":          output.ShortDescription,
+			"description":                output.Description,
+			"last_optimized_at":          &now,
+			"updated_at":                 &now,
+		}).Error
+	})
+	if err != nil {
+		return false, "", err
+	}
+	return true, strings.Join(aiSEOChangeSummary(product, map[string]interface{}{"name": output.CorrectedName, "short_description": output.ShortDescription, "description": output.Description, "meta_title": output.MetaTitle, "meta_description": output.MetaDescription, "meta_keywords": output.MetaKeywords}), "; "), nil
+}
+
+// finalizeCategoryOptimizationJob atomically releases every residual item and
+// closes the job. A claim/update failure therefore remains auditable but can
+// never leave queued/running product IDs permanently excluded from later jobs.
+func finalizeCategoryOptimizationJob(db *gorm.DB, jobID, workerToken string, workerErrors []string) (bool, error) {
+	return finalizeDraftJob(db, jobID, workerToken, workerErrors, "Category task item did not reach a terminal state")
+}
+
+func markCategoryOptimizationItemUnresolved(jobID, workerToken string, item models.AIAgentSEOJobItem, result services.ProductCategoryOptimizationResult, proposal services.ClassificationProposal) {
+	db := config.GetDB()
+	updates := map[string]any{"status": "unresolved", "classification_status": "unresolved", "classification_rule": truncateRunes(result.MatchRule, 160), "error": truncateRunes(result.Message, 1000)}
+	// Prefer the richer review payload when the AI fallback ran, so the queue
+	// shows the candidate brand/type/confidence; otherwise keep the raw
+	// evidence the deterministic pass collected.
+	if payload := ClassificationReviewPayloadJSON(proposal); payload != "" {
+		updates["evidence_json"] = payload
+		updates["classification_status"] = classificationStatusForProposal(proposal)
+		if strings.TrimSpace(proposal.Inference.MatchRule) != "" {
+			updates["classification_rule"] = truncateRunes(proposal.Inference.MatchRule, 160)
+		}
+	} else if evidenceJSON, err := json.Marshal(result.Evidence); err == nil {
+		updates["evidence_json"] = string(evidenceJSON)
+	}
+	dbResult := db.Model(&models.AIAgentSEOJobItem{}).
+		Where("id = ? AND status = ?", item.ID, "running").
+		Where("EXISTS (SELECT 1 FROM ai_agent_seo_jobs WHERE id = ? AND status IN ? AND worker_token = ?)", jobID, []string{"running", "paused"}, workerToken).
+		Updates(updates)
+	if dbResult.Error == nil && dbResult.RowsAffected > 0 {
+		config.GetDB().Model(&models.AIAgentSEOJob{}).Where("id = ?", jobID).Updates(map[string]any{"processed": gorm.Expr("processed + 1"), "unresolved": gorm.Expr("unresolved + 1")})
+	}
+}
+
+func failCategoryOptimizationItem(jobID, workerToken string, item models.AIAgentSEOJobItem, err error) {
+	if isAISEOJobCancelled(config.GetDB(), jobID) {
+		return
+	}
+	message := truncateRunes(err.Error(), 1000)
+	db := config.GetDB()
+	result := db.Model(&models.AIAgentSEOJobItem{}).
+		Where("id = ? AND status = ?", item.ID, "running").
+		Where("EXISTS (SELECT 1 FROM ai_agent_seo_jobs WHERE id = ? AND status IN ? AND worker_token = ?)", jobID, []string{"running", "paused"}, workerToken).
+		Updates(map[string]any{"status": "failed", "error": message})
+	if result.Error == nil && result.RowsAffected > 0 {
+		incrementAIAgentSEOJob(jobID, false)
+	}
+}
+
+func failQueuedCategoryOptimizationItems(jobID, message string) {
+	db := config.GetDB()
+	message = truncateRunes(message, 1000)
+	var count int64
+	if err := db.Model(&models.AIAgentSEOJobItem{}).
+		Where("job_id = ? AND status = ?", jobID, "queued").Count(&count).Error; err != nil || count == 0 {
+		return
+	}
+	if err := db.Model(&models.AIAgentSEOJobItem{}).
+		Where("job_id = ? AND status = ?", jobID, "queued").
+		Updates(map[string]any{"status": "failed", "error": message}).Error; err != nil {
+		return
+	}
+	_ = db.Model(&models.AIAgentSEOJob{}).Where("id = ?", jobID).
+		Updates(map[string]any{"processed": gorm.Expr("processed + ?", count), "failed": gorm.Expr("failed + ?", count)}).Error
+}
+
+func authorizeCategoryJobControl(c *gin.Context, db *gorm.DB, jobID string) bool {
+	var job models.AIAgentSEOJob
+	if err := db.Select("id", "selection_mode").First(&job, "id = ?", jobID).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.APIResponse{Success: false, Message: "AI SEO job not found"})
+		return false
+	}
+	if job.SelectionMode == aiSEOCategorySelectionMode && !isAdminRequest(c) {
+		c.JSON(http.StatusForbidden, models.APIResponse{Success: false, Message: "Only administrators can control category optimization tasks"})
+		return false
+	}
+	return true
+}
+
+// ListSEOJobItems pages large task details without loading up to 30,000 item
+// records into one response. The existing job detail endpoint returns only the
+// first bounded page for backwards compatibility.
+func (ac *AIAgentController) ListSEOJobItems(c *gin.Context) {
+	db := config.GetDB()
+	jobID := c.Param("id")
+	var job models.AIAgentSEOJob
+	if err := db.Select("id", "selection_mode").First(&job, "id = ?", jobID).Error; err != nil {
+		c.JSON(http.StatusNotFound, models.APIResponse{Success: false, Message: "AI SEO job not found"})
+		return
+	}
+	if job.SelectionMode == aiSEOCategorySelectionMode && !isAdminRequest(c) {
+		c.JSON(http.StatusForbidden, models.APIResponse{Success: false, Message: "Only administrators can view category optimization task items"})
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "200"))
+	if limit < 1 {
+		limit = 200
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if offset < 0 {
+		offset = 0
+	}
+	query := db.Model(&models.AIAgentSEOJobItem{}).Where("job_id = ?", jobID)
+	if status := strings.ToLower(strings.TrimSpace(c.Query("status"))); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Message: "Failed to count task items", Error: err.Error()})
+		return
+	}
+	var items []models.AIAgentSEOJobItem
+	if err := query.Order("id ASC").Limit(limit).Offset(offset).Find(&items).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse{Success: false, Message: "Failed to load task items", Error: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, models.APIResponse{Success: true, Data: gin.H{"items": items, "total": total, "limit": limit, "offset": offset}})
+}
+
+func isAdminRequest(c *gin.Context) bool {
+	role, exists := c.Get("role")
+	return exists && role == "admin"
+}

@@ -1,0 +1,21 @@
+import Shell from './Shell';
+import Link from 'next/link';
+import ProductGrid from './ProductGrid';
+import { storefront, type ProductList, type Navigation, type CatalogFilters } from '@/services/storefront.server';
+import { notFound } from 'next/navigation';
+
+export default async function Catalog({ category, q = '', make = '', part_type = '', year = '', page = 1 }: CatalogFilters & { category?: string }) {
+  if (!Number.isInteger(page) || page > 1000000 || (year && !/^(19|20)\d{2}$/.test(year)) || q.length > 200) notFound();
+  const params = new URLSearchParams({ page: String(page), q, make, part_type, year }); if (category) params.set('category', category);
+  const [data, nav] = await Promise.all([storefront<ProductList>(`products?${params}`), storefront<Navigation>('navigation')]);
+  if (!data || (page > 1 && page > data.total_pages)) notFound();
+  const path = category ? `/categories/${category}` : '/products';
+  const pageURL=(n:number)=>`${path}?${new URLSearchParams({q,make,part_type,year,page:String(n)})}`;
+  const pageNumbers=[...new Set([1,...Array.from({length:5},(_,i)=>page-2+i),data.total_pages])].filter(n=>n>0&&n<=data.total_pages).sort((a,b)=>a-b);
+  const roots=nav?.categories.filter(c=>!c.parent_id)||[];
+  return <Shell><section className="sap-page-heading"><div className="sap-container"><div className="sap-breadcrumb"><Link href="/">Home</Link><span>/</span><Link href="/products">Products</Link>{category&&<><span>/</span><span>{data.category?.name}</span></>}</div><p className="sap-eyebrow">AUTOMOTIVE A/C CATALOG</p><h1>{data.category?.name || 'Find the right part'}</h1><p>Search by OE reference, ST code, vehicle or compressor model.</p></div></section>
+    <div className="sap-container sap-catalog-layout"><aside className="sap-category-sidebar"><h2>Browse categories</h2><Link className={!category?'is-active':''} href="/products">All products</Link>{roots.map(root=><details key={root.id} open={root.id===data.category?.id||nav?.categories.some(c=>c.parent_id===root.id&&c.slug===category)||undefined}><summary><Link className={root.slug===category?'is-active':''} href={`/categories/${root.slug}`}>{root.name}<span>{root.product_count || 0}</span></Link></summary><div>{nav?.categories.filter(c=>c.parent_id===root.id).map(c=><Link className={c.slug===category?'is-active':''} key={c.id} href={`/categories/${c.slug}`}>{c.name}<span>{c.product_count||0}</span></Link>)}</div></details>)}<div className="sap-filter-tip">Need help matching a part?<Link href="/contact_us">Send us the OE number →</Link></div></aside>
+    <div className="sap-catalog-results"><form className="sap-filter-form" action={path}><label className="sap-filter-query">OE / ST code / model<input type="search" name="q" defaultValue={q} placeholder="e.g. 88320-0C010 or ST-10025" maxLength={200}/></label><label>Vehicle make<select name="make" defaultValue={make}><option value="">All makes</option>{nav?.makes.map(v=><option key={v}>{v}</option>)}</select></label><label>Part type<select name="part_type" defaultValue={part_type}><option value="">All types</option>{nav?.part_types.map(v=><option key={v}>{v}</option>)}</select></label><label>Year<input name="year" type="number" min="1900" max="2099" placeholder="Year" defaultValue={year}/></label><button className="sap-button" type="submit">Find parts</button></form><div className="sap-results-bar"><p><strong>{data.total.toLocaleString('en-US')}</strong> matching products</p>{(q||make||part_type||year)&&<Link href={path}>Clear filters ×</Link>}<span>Page {page} / {Math.max(1,data.total_pages)}</span></div>{year&&<p className="sap-fitment-disclaimer">Year filtering includes only explicitly documented, closed year ranges. Confirm open-ended or unlisted applications with our team.</p>}<ProductGrid products={data.products}/>
+    {data.total_pages>1&&<nav className="sap-pagination" aria-label="Pagination">{page>1&&<Link href={pageURL(page-1)}>← Previous</Link>}{pageNumbers.map((n,i)=><span key={n}>{i>0&&n>pageNumbers[i-1]+1&&<span className="sap-page-gap">…</span>}<Link aria-current={n===page?'page':undefined} href={pageURL(n)}>{n}</Link></span>)}{page<data.total_pages&&<Link href={pageURL(page+1)}>Next →</Link>}</nav>}</div></div>
+  </Shell>;
+}

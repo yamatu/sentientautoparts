@@ -1,0 +1,2 @@
+'use client';
+export default function ErrorPage({ reset }: { reset: () => void }) { return <main className="mx-auto max-w-3xl px-6 py-24"><h1 className="text-3xl font-bold">Service temporarily unavailable</h1><p className="my-4">The catalogue could not be loaded. Please try again shortly.</p><button type="button" onClick={reset} className="bg-blue-700 px-5 py-3 text-white">Try again</button></main>; }
