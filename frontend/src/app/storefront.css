@@ -58,7 +58,9 @@
 .automotive-site .sap-desktop-nav > a, .automotive-site .sap-nav-products > a { padding:8px 14px; border-radius:var(--r-sm); display:block; color:var(--ink); text-transform:uppercase; letter-spacing:.6px; transition:background .15s,color .15s; }
 .automotive-site .sap-desktop-nav > a:hover, .automotive-site .sap-nav-products > a:hover { background:var(--accent-soft); color:var(--accent); }
 .automotive-site .sap-nav-products { position:relative; }
-.automotive-site .sap-megamenu { display:none; position:absolute; top:calc(100% + 8px); left:50%; transform:translateX(-50%); width:min(860px,90vw); background:#fff; padding:24px; border:1px solid var(--line); border-radius:var(--r-lg); box-shadow:var(--shadow-lg); grid-template-columns:repeat(4,1fr); gap:12px; }
+.automotive-site .sap-megamenu { display:grid; visibility:hidden; opacity:0; pointer-events:none; position:absolute; z-index:50; top:calc(100% + 14px); left:50%; transform:translate(-50%,6px); width:min(860px,90vw); background:#fff; padding:24px; border:1px solid var(--line); border-radius:var(--r-lg); box-shadow:var(--shadow-lg); grid-template-columns:repeat(4,1fr); gap:12px; transition:opacity .15s ease,transform .15s ease,visibility 0s linear .25s; }
+/* Invisible bridge over the gap so moving the pointer down never leaves the hover area. */
+.automotive-site .sap-megamenu::before { content:''; position:absolute; left:0; right:0; top:-22px; height:22px; }
 .automotive-site .sap-megamenu a { display:flex; align-items:center; gap:12px; padding:14px; background:var(--soft); border-radius:var(--r-md); border:1px solid transparent; transition:border-color .15s,background .15s,transform .15s; }
 .automotive-site .sap-megamenu a:hover { background:#fff; border-color:var(--accent); transform:translateY(-2px); box-shadow:var(--shadow-sm); }
 .automotive-site .sap-megamenu img { width:56px; height:56px; flex-shrink:0; object-fit:contain; background:#fff; border:1px solid var(--line); border-radius:var(--r-sm); }
@@ -66,7 +68,7 @@
 .automotive-site .sap-megamenu a > span > span { display:block; margin-top:5px; font-weight:400; color:var(--muted); font-size:11px; }
 .automotive-site .sap-megamenu a > span { min-width:0; }
 .automotive-site .sap-megamenu-icon { width:56px; height:56px; flex-shrink:0; padding:12px; color:var(--accent); background:#fff; border:1px solid var(--line); border-radius:var(--r-sm); }
-.automotive-site .sap-nav-products:hover .sap-megamenu, .automotive-site .sap-nav-products:focus-within .sap-megamenu { display:grid; }
+.automotive-site .sap-nav-products:hover .sap-megamenu, .automotive-site .sap-nav-products:focus-within .sap-megamenu { visibility:visible; opacity:1; pointer-events:auto; transform:translate(-50%,0); transition-delay:0s; }
 
 /* ── Buttons ── */
 .automotive-site .sap-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; background:var(--accent); color:#fff; border:1.5px solid var(--accent); border-radius:var(--r-sm); padding:11px 22px; font-size:14px; font-weight:700; line-height:1.4; transition:background .15s,transform .15s,box-shadow .15s; white-space:nowrap; letter-spacing:.1px; }
@@ -194,6 +196,25 @@
 .automotive-site .sap-page-heading { background:linear-gradient(135deg,#f0f5ff,#e8edfc); padding:28px 0 44px; border-bottom:1px solid var(--line); }
 .automotive-site .sap-page-heading h1 { font-size:38px; }
 .automotive-site .sap-page-heading > div > p:last-child { color:var(--muted); font-size:14px; margin-top:14px; }
+
+/* ── About: partners ── */
+.automotive-site .sap-partners { padding:24px 0 96px; }
+.automotive-site .sap-partners .sap-container { max-width:1120px; }
+.automotive-site .sap-partners-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:96px; row-gap:56px; }
+.automotive-site .sap-partners-grid h2 { color:var(--accent); font-size:clamp(34px,4vw,54px); font-weight:800; letter-spacing:-1px; line-height:1.1; }
+.automotive-site .sap-partners-grid figure { margin:0; }
+.automotive-site .sap-partners-grid figcaption { display:flex; align-items:center; gap:8px; font-size:17px; }
+.automotive-site .sap-partners-grid figcaption img { width:18px; height:18px; border-radius:50%; object-fit:cover; }
+.automotive-site .sap-partners-grid blockquote { margin:18px 0 0; max-width:480px; color:var(--ink); font-size:16px; line-height:1.5; }
+.automotive-site .sap-partners-grid figure > p { margin-top:18px; color:var(--ink); font-size:16px; }
+.automotive-site .sap-partners-map-title { margin:96px 0 36px; text-align:center; color:var(--accent); font-size:clamp(20px,2.2vw,30px); font-weight:800; letter-spacing:.4px; text-transform:uppercase; }
+.automotive-site .sap-partners-map { display:block; width:100%; max-width:960px; height:auto; margin:0 auto; }
+@media (max-width: 860px) {
+ .automotive-site .sap-partners { padding:8px 0 64px; }
+ .automotive-site .sap-partners-grid { grid-template-columns:1fr; row-gap:36px; }
+ .automotive-site .sap-partners-grid blockquote, .automotive-site .sap-partners-grid figure > p { font-size:15px; }
+ .automotive-site .sap-partners-map-title { margin:56px 0 24px; }
+}
 
 /* ── About page ── */
 .automotive-site .sap-about-heading { background:#f1f2f4; padding:30px 0; text-align:center; border-bottom:1px solid var(--line); }

@@ -19,8 +19,17 @@ func B2BHomepageDefaults() []HomepageContent {
 		{SectionKey: "home_news", Title: "Insights & news", Subtitle: "LATEST UPDATES", ButtonText: "View all news", ButtonURL: "/news", Data: datatypes.JSON(`{"limit":3}`), SortOrder: 80, IsActive: false},
 		{SectionKey: "inquiry_section", Title: "Have an OE number or a vehicle application?", Subtitle: "LET’S FIND THE RIGHT PART", Description: "Send your part references and requirements for a fitment check and quotation.", ButtonText: "Send an inquiry", ButtonURL: "/contact_us", SortOrder: 90, IsActive: true},
 		{SectionKey: "about_content", Title: "About us", SortOrder: 100, IsActive: false},
+		{SectionKey: "about_partners", Title: "Our partners", Subtitle: "WORLDWIDE COOPERATION LEADING BRANDS", ImageURL: "/legacy/theme/images/hezuo_bg.png", Data: datatypes.JSON(defaultAboutPartners), SortOrder: 110, IsActive: true},
 	}
 }
+
+const defaultAboutPartners = `{"partners":[
+{"country":"UAE","flag":"/legacy/theme/images/hezuo_flag1.png","quote":"I visited their factory in Guangzhou — clean, efficient, and professional. I trust their production.","author":"Fleet Maintenance Buyer, Dubai"},
+{"country":"Brazil","flag":"/legacy/theme/images/hezuo_flag3.png","quote":"Even across the ocean, SENTIENT delivers as promised. They take quality seriously, and that's what matters to us.","author":"A/C Specialist, São Paulo"},
+{"country":"South Africa","flag":"/legacy/theme/images/hezuo_flag2.png","quote":"They understand the market needs and respond fast. SENTIENT is not just a supplier — they are a real partner.","author":"Auto Parts Importer, Johannesburg"},
+{"country":"Saudi Arabia","flag":"/legacy/theme/images/hezuo_flag5.png","quote":"We've been working with SENTIENT for over 3 years. Their compressor quality and professional service helped us build a strong reputation locally.","author":"Local Distributor, Riyadh"},
+{"country":"Philippines","flag":"/legacy/theme/images/hezuo_flag4.png","quote":"We tested many suppliers before choosing SENTIENT. Stable performance, fast communication, and they even helped us with custom branding.","author":"Retail Chain Owner, Manila"}
+]}`
 
 func B2BHomepageSections() []HomepageSection {
 	return []HomepageSection{
@@ -34,6 +43,7 @@ func B2BHomepageSections() []HomepageSection {
 		{Key: "home_news", Name: "首页新闻 / News", Description: "最近发布文章及显示数量"},
 		{Key: "inquiry_section", Name: "询盘行动区 / Inquiry CTA", Description: "首页及内页底部的通用询盘提示和按钮"},
 		{Key: "about_content", Name: "公司介绍 / About", Description: "/about 页面内容，不参与首页排序"},
+		{Key: "about_partners", Name: "合作伙伴 / Partners", Description: "/about 页面底部：客户评价（国家、国旗、评价、署名）与合作地图图片"},
 	}
 }
 func IsB2BHomepageKey(key string) bool {

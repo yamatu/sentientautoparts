@@ -52,6 +52,11 @@ func ValidateHomepageContent(c models.HomepageContent) error {
 			return errors.New("show_stats must be boolean")
 		}
 	}
+	if raw, ok := data["partners"]; ok {
+		if err := validatePartners(raw); err != nil {
+			return err
+		}
+	}
 	if c.SectionKey == "featured_products" || c.SectionKey == "home_news" {
 		if raw, ok := data["limit"]; ok {
 			n, ok := raw.(float64)
@@ -67,6 +72,31 @@ func ValidateHomepageContent(c models.HomepageContent) error {
 			v, ok := raw.(string)
 			if !ok || !strings.Contains("|latest|featured|", "|"+v+"|") {
 				return errors.New("product mode must be latest or featured")
+			}
+		}
+	}
+	return nil
+}
+
+func validatePartners(raw any) error {
+	items, ok := raw.([]any)
+	if !ok || len(items) > 24 {
+		return errors.New("partners must be a list of at most 24 entries")
+	}
+	limits := map[string]int{"country": 80, "flag": 1000, "quote": 600, "author": 160}
+	for _, item := range items {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			return errors.New("each partner must be an object")
+		}
+		for key, value := range entry {
+			max, known := limits[key]
+			text, isText := value.(string)
+			if !known || !isText || utf8.RuneCountInString(text) > max {
+				return fmt.Errorf("invalid partner field: %s", key)
+			}
+			if key == "flag" && !SafePublicURL(text, true) {
+				return errors.New("partner flag must be a safe local path or http(s) URL")
 			}
 		}
 	}
