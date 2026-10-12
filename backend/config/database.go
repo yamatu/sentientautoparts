@@ -261,6 +261,8 @@ func ConnectDatabase() {
 		migrateLegacyCompanyFacts()
 	}
 
+	applyDataPatches(DB)
+
 	// Preserve the former singleton provider configuration as the first named
 	// AI profile. This migration is idempotent and copies encrypted key material
 	// without decrypting or rotating it.

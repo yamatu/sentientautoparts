@@ -19,7 +19,7 @@ import TrackingCode, { type PublicTrackingConfig } from '@/components/analytics/
 export const dynamic = 'force-dynamic';
 export async function generateMetadata(): Promise<Metadata> {
   const {site}=await getStorefrontSettings();
-  return { metadataBase: new URL(getSiteUrl()), title: { default: site.brand_name, template: `%s | ${site.brand_name}` }, description: site.home_meta_description, robots: { index: true, follow: true }, verification: { google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION || undefined } };
+  return { metadataBase: new URL(getSiteUrl()), title: { default: site.brand_name, template: `%s | ${site.brand_name}` }, description: site.home_meta_description, icons: { icon: [{ url: '/favicon.ico', sizes: 'any' }, { url: '/favicon-32x32.png', type: 'image/png', sizes: '32x32' }, { url: '/favicon-16x16.png', type: 'image/png', sizes: '16x16' }], apple: '/apple-touch-icon.png' }, manifest: '/manifest.json', robots: { index: true, follow: true }, verification: { google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION || undefined } };
 }
 async function tracking(): Promise<PublicTrackingConfig | null> {
   try {
@@ -30,5 +30,5 @@ async function tracking(): Promise<PublicTrackingConfig | null> {
   } catch { return null; }
 }
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  return <html lang="en" className={inter.variable}><head><TrackingCode config={await tracking()} /><link rel="icon" href="/favicon.ico" /><meta name="theme-color" content="#1a51ff" /></head><body><ReactQueryProvider><PublicI18nProvider initialLocale="en">{children}<Toaster position="top-right" /></PublicI18nProvider></ReactQueryProvider></body></html>;
+  return <html lang="en" className={inter.variable}><head><TrackingCode config={await tracking()} /><meta name="theme-color" content="#1a51ff" /></head><body><ReactQueryProvider><PublicI18nProvider initialLocale="en">{children}<Toaster position="top-right" /></PublicI18nProvider></ReactQueryProvider></body></html>;
 }

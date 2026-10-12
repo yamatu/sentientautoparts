@@ -38,6 +38,7 @@ type StorefrontSetting struct {
 
 func DefaultStorefrontSetting() StorefrontSetting {
 	return StorefrontSetting{ID: 1, BrandName: "sentientautoparts", Tagline: "Automotive air conditioning parts",
+		LogoURL: "/images/sentient-logo-horizontal.png", ContactEmail: "gzsentient@gmail.com", ContactPhone: "+86 13828593365",
 		FooterIntro: "Automotive air conditioning parts. Explore product references and vehicle applications in one catalog.",
 		FooterNote:  "Always confirm vehicle fitment before ordering.", QuoteButtonText: "Get a quote", InquiryHeading: "Inquire today",
 		InquiryIntro:   "Tell us the part you need. Include an OE reference or vehicle details to help us check fitment.",

@@ -14,10 +14,12 @@ import {
   ArrowsUpDownIcon,
   XMarkIcon,
   ExclamationTriangleIcon,
+  PhotoIcon,
 } from '@heroicons/react/24/outline';
 import AdminLayout from '@/components/admin/AdminLayout';
 import CategoryHierarchyEditor from '@/components/admin/CategoryHierarchyEditor';
 import CategoryAIToolsPanel from '@/components/admin/CategoryAIToolsPanel';
+import MediaPickerModal from '@/components/admin/MediaPickerModal';
 import { CategoryService, ProductService } from '@/services';
 import { AIAgentService } from '@/services/ai-agent.service';
 import { queryKeys } from '@/lib/react-query';
@@ -41,6 +43,7 @@ export default function AdminCategoriesPage() {
   const [deletionTargetId, setDeletionTargetId] = useState('');
   const [seoJobCategoryId, setSeoJobCategoryId] = useState<number | null>(null);
   const [titleJobCategoryId, setTitleJobCategoryId] = useState<number | null>(null);
+  const [imagePickerOpen, setImagePickerOpen] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -700,21 +703,42 @@ export default function AdminCategoriesPage() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {locale === 'zh' ? '分类图片 URL' : 'Image URL'}
+                    {locale === 'zh' ? '分类图片' : 'Category image'}
                   </label>
-                  <input
-                    type="url"
-                    name="image_url"
-                    value={formData.image_url}
-                    onChange={handleInputChange}
-                    className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="https://..."
-                  />
-                  {formData.image_url && (
-                    <div className="mt-2 w-20 h-20 rounded border border-gray-200 overflow-hidden bg-gray-50">
-                      <img src={formData.image_url} alt="preview" className="w-full h-full object-contain" />
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-20 w-20 flex-shrink-0 items-center justify-center overflow-hidden rounded border border-gray-200 bg-gray-50">
+                      {formData.image_url ? (
+                        <img src={formData.image_url} alt="preview" className="h-full w-full object-contain" />
+                      ) : (
+                        <PhotoIcon className="h-7 w-7 text-gray-300" />
+                      )}
                     </div>
-                  )}
+                    <div className="flex flex-col gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setImagePickerOpen(true)}
+                        className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                      >
+                        <PhotoIcon className="h-4 w-4" />
+                        {locale === 'zh' ? '从图库选择 / 上传' : 'Choose or upload'}
+                      </button>
+                      {formData.image_url && (
+                        <button
+                          type="button"
+                          onClick={() => setFormData(prev => ({ ...prev, image_url: '' }))}
+                          className="text-left text-xs text-red-600 hover:underline"
+                        >
+                          {locale === 'zh' ? '移除图片' : 'Remove image'}
+                        </button>
+                      )}
+                      <p className="text-xs text-gray-500">
+                        {locale === 'zh'
+                          ? '显示在首页分类卡片和 Products 下拉菜单中，建议使用透明背景的方图。'
+                          : 'Shown on the homepage category cards and in the Products menu. A square image with a transparent background works best.'}
+                      </p>
+                    </div>
+                  </div>
+                  <input type="hidden" name="image_url" value={formData.image_url} readOnly />
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -868,6 +892,16 @@ export default function AdminCategoriesPage() {
           </div>
         </div>
       ) : null}
+      <MediaPickerModal
+        open={imagePickerOpen}
+        onClose={() => setImagePickerOpen(false)}
+        multiple={false}
+        title={locale === 'zh' ? '选择分类图片' : 'Select category image'}
+        onSelect={assets => {
+          if (assets[0]) setFormData(prev => ({ ...prev, image_url: assets[0].url }));
+          setImagePickerOpen(false);
+        }}
+      />
     </AdminLayout>
   );
 }

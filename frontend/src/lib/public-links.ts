@@ -10,3 +10,5 @@ export function publicLink(input?: string, allowExternal = true): string | null 
  try { const u=new URL(value); if (!['https:','http:'].includes(u.protocol)||u.username||u.password) return null; return u.href; } catch { return null; }
 }
 export function phoneLink(value: string): string | null { const phone=value.replace(/[^+\d]/g,''); return phone.length>=5?`tel:${phone}`:null; }
+// Shipped brand lockup, used when the operator has not uploaded a logo yet.
+export const DEFAULT_BRAND_LOGO = '/images/sentient-logo-horizontal.png';

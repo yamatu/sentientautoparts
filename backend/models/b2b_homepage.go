@@ -14,7 +14,7 @@ func B2BHomepageDefaults() []HomepageContent {
 		{SectionKey: "product_range", Title: "Made for automotive cooling", Subtitle: "PRODUCT RANGE", ButtonText: "Explore all products", ButtonURL: "/products", SortOrder: 30, IsActive: true},
 		{SectionKey: "vehicle_makes", Title: "Browse by vehicle make", Subtitle: "VEHICLE APPLICATIONS", Description: "Vehicle makes describe application, not the part manufacturer.", SortOrder: 40, IsActive: true},
 		{SectionKey: "featured_products", Title: "Explore A/C compressors", Subtitle: "FROM OUR CATALOG", ButtonText: "View catalog", ButtonURL: "/products", Data: datatypes.JSON(`{"limit":8,"mode":"latest"}`), SortOrder: 50, IsActive: true},
-		{SectionKey: "advantages_section", Title: "A partner for your parts business", Subtitle: "WHY CHOOSE US", SortOrder: 60, IsActive: true},
+		{SectionKey: "advantages_section", Title: "WHY SENTIENT?", Subtitle: "WHY CHOOSE US", SortOrder: 60, IsActive: true},
 		{SectionKey: "home_banners", Title: "Featured information", Subtitle: "HIGHLIGHTS", SortOrder: 70, IsActive: false},
 		{SectionKey: "home_news", Title: "Insights & news", Subtitle: "LATEST UPDATES", ButtonText: "View all news", ButtonURL: "/news", Data: datatypes.JSON(`{"limit":3}`), SortOrder: 80, IsActive: false},
 		{SectionKey: "inquiry_section", Title: "Have an OE number or a vehicle application?", Subtitle: "LET’S FIND THE RIGHT PART", Description: "Send your part references and requirements for a fitment check and quotation.", ButtonText: "Send an inquiry", ButtonURL: "/contact_us", SortOrder: 90, IsActive: true},

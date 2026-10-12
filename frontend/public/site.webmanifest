@@ -1,11 +1,11 @@
 {
-  "name": "Vibocnc Industrial Automation Parts",
-  "short_name": "Vibocnc",
-  "description": "Multi-brand industrial automation parts and repair support since 2007",
+  "name": "Sentient Auto Part",
+  "short_name": "SENTIENT",
+  "description": "Automotive A/C compressors, condensers, evaporators and expansion valves for importers, distributors and repair shops.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#f59e0b",
+  "theme_color": "#1a51ff",
   "icons": [
     {
       "src": "/android-chrome-192x192.png",
