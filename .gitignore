@@ -13,3 +13,5 @@ data/*.sql
 reports/*
 !reports/.gitkeep
 .runtime/
+.pi/
+data/*.zip

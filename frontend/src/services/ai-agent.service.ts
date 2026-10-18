@@ -304,7 +304,7 @@ export interface AIAgentPricePreview {
 }
 
 export type AIAgentSEOJobStatus = 'queued' | 'running' | 'paused' | 'cancelled' | 'completed' | 'completed_with_errors' | 'failed';
-export type AIAgentSEOItemStatus = 'queued' | 'running' | 'optimized' | 'unresolved' | 'failed' | 'cancelled';
+export type AIAgentSEOItemStatus = 'queued' | 'running' | 'optimized' | 'skipped' | 'unresolved' | 'failed' | 'cancelled';
 
 export interface AIAgentSEOJobItem {
   id: number;
@@ -324,7 +324,7 @@ export interface AIAgentSEOJob {
   id: string;
   prompt: string;
   focus?: AIAgentSEOFocus[];
-  selection_mode: 'selected' | 'auto_candidates' | 'auto_failed' | 'category_optimization' | 'spec_research' | 'product_identification';
+  selection_mode: 'selected' | 'auto_candidates' | 'auto_failed' | 'category_optimization' | 'spec_research' | 'product_identification' | 'listing_optimization';
   status: AIAgentSEOJobStatus;
   ai_profile_id?: number;
   ai_profile_name?: string;
@@ -416,6 +416,7 @@ export interface AIAgentSEOJobItemsPage {
   total: number;
   limit: number;
   offset: number;
+  status_counts?: Partial<Record<AIAgentSEOItemStatus, number>>;
 }
 
 export interface ProductSEOIssueSample {
@@ -835,9 +836,9 @@ export class AIAgentService {
     throw new Error(response.data.message || 'Unable to load AI SEO job');
   }
 
-  static async listSEOJobItems(id: string, limit = 200, offset = 0, status = ""): Promise<AIAgentSEOJobItemsPage> {
+  static async listSEOJobItems(id: string, limit = 200, offset = 0, status = "", query = ""): Promise<AIAgentSEOJobItemsPage> {
     const response = await apiClient.get<APIResponse<AIAgentSEOJobItemsPage>>(`/admin/ai-agent/seo/jobs/${encodeURIComponent(id)}/items`, {
-      params: { limit, offset, status: status || undefined },
+      params: { limit, offset, status: status || undefined, q: query || undefined },
     });
     if (response.data.success && response.data.data) return response.data.data;
     throw new Error(response.data.message || 'Unable to load AI SEO job items');
@@ -855,10 +856,11 @@ export class AIAgentService {
     throw new Error(response.data.message || 'Unable to resume AI SEO job');
   }
 
-  static async endPausedSEOJob(id: string): Promise<AIAgentSEOJob> {
-    const response = await apiClient.post<APIResponse<AIAgentSEOJob>>(`/admin/ai-agent/seo/jobs/${encodeURIComponent(id)}/end`);
+  /** Ends a queued, running or paused job; large jobs release their items in batches. */
+  static async endSEOJob(id: string): Promise<AIAgentSEOJob> {
+    const response = await apiClient.post<APIResponse<AIAgentSEOJob>>(`/admin/ai-agent/seo/jobs/${encodeURIComponent(id)}/end`, undefined, { timeout: 300000 });
     if (response.data.success && response.data.data) return response.data.data;
-    throw new Error(response.data.message || 'Unable to end paused AI SEO job');
+    throw new Error(response.data.message || 'Unable to end AI job');
   }
 
   static async listSEOJobs(): Promise<AIAgentSEOJob[]> {

@@ -109,6 +109,7 @@ backend/
 │   ├── products    # Product CRUD with image management
 │   │   ├── spec-research        # Model-number parameter research (creates drafts)
 │   │   └── spec-drafts          # Draft endpoints (no standalone page; see below)
+│   ├── ai-agent/listing    # AI listing jobs, pasted-listing import, category suggestions
 │   ├── ebay-import-drafts  # Scraped listing queue + eBay market/pricing tab
 │   ├── commerce-policy # Editable shipping / warranty / return promise
 │   ├── categories  # Category management
@@ -196,6 +197,37 @@ The single source of truth for the list above is `controllers.modelDerivedFields
 - Approval writes `product.technical_specs`; the value flows into generated copy on the next regeneration (opt-in) and is rendered by the storefront spec table
 - `services.ResearchProductSpecs` searches public evidence and extracts parameters verbatim; `models.ProductSpecDraft` holds the review queue. Nothing is auto-published, and every candidate needs a cited `SourceURL`
 - Details: `docs/SPEC_RESEARCH.md`
+
+### AI Listing Optimization (products → AI Job Center)
+
+`Admin → Products` offers 「AI 智能优化」 (a background job over the current
+selection) and 「粘贴资料批量导入」 (fixed-format pasted listings); the product
+form embeds the same pipeline as `AIListingAssist`.
+
+- **Categories are part type > vehicle make, never brand > category > type.**
+  `services.ResolveAutomotiveListingCategory` refuses to create a root
+  (`A/C Compressors`, `Auto Condensers`, `Evaporator Units`, `Expansion Valves`)
+  and reports it instead; only the vehicle-make child may be created, behind
+  `withCategoryCreationLock`. A vehicle make is never written as the brand, and
+  unknown years/engines/makes are dropped rather than invented
+  (`services.FallbackAutomotiveCategoryPath`).
+- **The prompts keep a `PART_TYPE_OPTIONS` placeholder** that `aiListingPrompts()`
+  fills with `services.AutomotivePartTypeOptions()`; keep them automotive so no
+  industrial brand wording leaks back in
+  (`TestAIListingPromptsRenderAutomotiveTaxonomy`).
+- **Jobs, not requests.** `selection_mode = listing_optimization` runs through
+  `processListingOptimizationJob` on the existing `AIAgentSEOJob` tables and reads
+  the active AI profile per item, so the model can be switched mid-run. Scope is
+  stored in the job prompt after the `[[VIBOCNC_LISTING_JOB_OPTIONS=` marker.
+- **Nothing is published by the job.** Items end as `optimized`, `skipped` (gate
+  passed), `unresolved` (no evidence) or `failed`; the storefront cache is
+  invalidated only after a job finalizes.
+- `services.SanitizeListingRecord` / `NormalizeListingRecord` is the single
+  cleaning point for scraped and pasted text, and it folds `part_type` onto one of
+  the four catalogue values (`services.CanonicalAutomotivePartType`).
+- UI: `Admin → AI Job Center` (`/admin/ai-seo`) shows every job kind with
+  per-status counters, SKU search and an end-job action.
+- Details: `docs/AI_LISTING.md`
 
 ### Automated Draft Review (eBay listing → publishable product)
 

@@ -16,8 +16,7 @@ func AutomotiveMode() bool { return os.Getenv("CATALOG_DOMAIN") == "automotive" 
 // ResolveAutomotiveCategory uses the edited part type + explicit vehicle make.
 // Manufacturer-brand inference and industrial model patterns are never used.
 func ResolveAutomotiveCategory(db *gorm.DB, product models.Product) (uint, error) {
-	typeNames := map[string]string{"A/C Compressor": "A/C Compressors", "Condenser": "Auto Condensers", "Evaporator Unit": "Evaporator Units", "Expansion Valve": "Expansion Valves"}
-	rootName := typeNames[product.PartType]
+	rootName := AutomotivePartTypeCategoryName(product.PartType)
 	if rootName == "" {
 		return 0, errors.New("verify the automotive part type before category optimization")
 	}

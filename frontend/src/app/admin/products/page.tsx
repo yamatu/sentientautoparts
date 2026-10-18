@@ -17,12 +17,15 @@ import {
   ArrowDownTrayIcon,
   ArrowUpTrayIcon,
   SparklesIcon,
+  ClipboardDocumentListIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline';
 import AdminLayout from '@/components/admin/AdminLayout';
 import { B2B_MODE } from '@/types/storefront';
 import Pagination from '@/components/common/Pagination';
 import MediaPickerModal from '@/components/admin/MediaPickerModal';
+import AIListingJobModal from '@/components/admin/AIListingJobModal';
+import ListingImportModal from '@/components/admin/ListingImportModal';
 import { ProductService, CategoryService, CommercePolicyService, ProductSpecService } from '@/services';
 import { AIAgentService, type AIAgentSEOFocus, type AIAgentSEOJob } from '@/services/ai-agent.service';
 import type {
@@ -108,6 +111,8 @@ function AdminProductsContent() {
   const [customSelectCount, setCustomSelectCount] = useState('');
   const [selectingCustomCount, setSelectingCustomCount] = useState(false);
   const [showAISEOModal, setShowAISEOModal] = useState(false);
+  const [showAIListingModal, setShowAIListingModal] = useState(false);
+  const [showListingImport, setShowListingImport] = useState(false);
   const [showCategoryOptimizationModal, setShowCategoryOptimizationModal] = useState(false);
   const [categoryOptimizationScope, setCategoryOptimizationScope] = useState<'selected' | 'filtered'>('filtered');
   const [categoryOptimizationLimit, setCategoryOptimizationLimit] = useState('');
@@ -1240,6 +1245,18 @@ function AdminProductsContent() {
     }
   };
 
+  // Scope handed to the unified AI optimization modal: the same filters the
+  // list is showing, so "all filtered" really means what the administrator sees.
+  const aiListingFilters = {
+    category_id: Number(selectedCategory) > 0 ? Number(selectedCategory) : undefined,
+    include_descendants: Boolean(selectedCategory),
+    brand: selectedBrand || undefined,
+    search: searchQuery || undefined,
+    status: (statusFilter === 'active' || statusFilter === 'inactive') ? statusFilter : 'all',
+    featured: statusFilter === 'featured' ? 'true' : undefined,
+    ai_seo_status: aiSEOFilter === 'all' ? undefined : aiSEOFilter,
+  } as const;
+
   const isAISEOSelectAllMode = aiSEOJobMode === 'selected' && selectAllResults;
   const isAISEOCandidateMode = aiSEOJobMode !== 'selected' || isAISEOSelectAllMode;
   const isAISEOFailedOnly = aiSEOJobMode === 'failed_only';
@@ -1284,6 +1301,17 @@ function AdminProductsContent() {
                 ? (locale === 'zh' ? '清空中...' : 'Clearing...')
                 : (locale === 'zh' ? '清空全部产品图片' : 'Clear All Images')}
             </button>}
+            <button
+              type="button"
+              onClick={() => setShowListingImport(true)}
+              className="inline-flex items-center px-4 py-2 border border-violet-200 rounded-md shadow-sm text-sm font-medium text-violet-700 bg-white hover:bg-violet-50"
+              title={locale === 'zh'
+                ? '按固定格式粘贴多个产品资料：自动识别字段、按 SKU/零件号比对已有产品，并可选 AI 智能归类'
+                : 'Paste many listings in the fixed format: fields are recognised, existing SKUs are compared, categories can be AI-mapped.'}
+            >
+              <ClipboardDocumentListIcon className="h-4 w-4 mr-2" />
+              {locale === 'zh' ? '粘贴资料批量导入' : 'Paste Listings'}
+            </button>
             <button
               onClick={() => {
                 setShowImportModal(true);
@@ -1760,6 +1788,22 @@ function AdminProductsContent() {
                     ? (locale === 'zh' ? `自动优化分类（已选 ${selectedCurrentPageIds.length}）` : `Auto-classify (${selectedCurrentPageIds.length} selected)`)
                     : (locale === 'zh' ? `自动优化分类（可选数量）` : 'Auto-classify (choose count)')}
               </button>}
+
+              <button
+                onClick={() => setShowAIListingModal(true)}
+                className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-700 rounded-lg shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={totalProducts === 0}
+                title={locale === 'zh'
+                  ? '逐个质检产品：资料完整且 SEO 合格的直接跳过；缺型号/零件号/品牌/配件类型、分类缺失或内容单薄的，按固定格式联网检索并重写。价格和库存不会改动。'
+                  : 'Check every listing and rewrite only incomplete or weak ones in the fixed format. Price and stock are never changed.'}
+              >
+                <SparklesIcon className="h-4 w-4 mr-2" />
+                {selectAllResults
+                  ? (locale === 'zh' ? `AI 智能优化（全部筛选 ${totalProducts}）` : `AI Optimize (all ${totalProducts})`)
+                  : selectedIds.length > 0
+                    ? (locale === 'zh' ? `AI 智能优化（已选 ${selectedIds.length}）` : `AI Optimize (${selectedIds.length} selected)`)
+                    : (locale === 'zh' ? 'AI 智能优化' : 'AI Optimize')}
+              </button>
 
               <button
                 onClick={() => {
@@ -2572,6 +2616,31 @@ function AdminProductsContent() {
           </div>
         </div>
       )}
+      <AIListingJobModal
+        open={showAIListingModal}
+        locale={locale}
+        isAdmin={isAdmin}
+        selectedIds={selectedIds}
+        selectAllResults={selectAllResults}
+        totalProducts={totalProducts}
+        filters={aiListingFilters}
+        onClose={() => setShowAIListingModal(false)}
+        onStarted={(job) => {
+          setShowAIListingModal(false);
+          setSelectedIds([]);
+          setSelectAllResults(false);
+          void startAISEOPolling(job.id);
+        }}
+      />
+      <ListingImportModal
+        open={showListingImport}
+        locale={locale}
+        onClose={() => setShowListingImport(false)}
+        onImported={() => {
+          queryClient.invalidateQueries({ queryKey: queryKeys.products.lists() });
+          queryClient.invalidateQueries({ queryKey: queryKeys.categories.lists() });
+        }}
+      />
       <MediaPickerModal
         open={showCategoryImagePicker}
         onClose={() => setShowCategoryImagePicker(false)}

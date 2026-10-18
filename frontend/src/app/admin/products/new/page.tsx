@@ -15,6 +15,8 @@ import SeoPreview from '@/components/admin/SeoPreview';
 import CategoryCombobox from '@/components/admin/CategoryCombobox';
 import ShippingQuoteCalculator from '@/components/admin/ShippingQuoteCalculator';
 import TranslationEditor from '@/components/admin/TranslationEditor';
+import AIListingAssist from '@/components/admin/AIListingAssist';
+import type { AIListingGenerateResult } from '@/services/ai-listing.service';
 import { ProductService, CategoryService, CommercePolicyService } from '@/services';
 import { ProductCreateRequest, type Category, type CommercePolicySetting } from '@/types';
 import { getErrorMessage } from '@/lib/errors';
@@ -99,6 +101,40 @@ export default function NewProductPage() {
     queryKey: queryKeys.categories.lists(),
     queryFn: () => CategoryService.getAdminCategories(),
   });
+
+  // The AI rewrites the whole listing; the administrator still reviews and saves.
+  const applyAIListing = (result: AIListingGenerateResult) => {
+    const listing = result.listing;
+    const dirty = { shouldDirty: true, shouldValidate: true };
+    if (listing.name) setValue('name', listing.name, dirty);
+    if (!watch('sku') && listing.sku) setValue('sku', listing.sku, dirty);
+    if (listing.brand) setValue('brand', listing.brand, dirty);
+    if (listing.model) setValue('model', listing.model, dirty);
+    if (listing.part_number) setValue('part_number', listing.part_number, dirty);
+    if (listing.warranty_period) setValue('warranty_period', listing.warranty_period, dirty);
+    if (listing.lead_time) setValue('lead_time', listing.lead_time, dirty);
+    if (listing.weight_kg && !(Number(watch('weight')) > 0)) setValue('weight', listing.weight_kg, dirty);
+    if (listing.short_description) setValue('short_description', listing.short_description, dirty);
+    if (listing.description) setValue('description', listing.description, dirty);
+    if (listing.meta_title) setValue('meta_title', listing.meta_title, dirty);
+    if (listing.meta_description) setValue('meta_description', listing.meta_description, dirty);
+    if (listing.meta_keywords) setValue('meta_keywords', listing.meta_keywords, dirty);
+    // Automotive taxonomy: a part type or vehicle make is only written when the
+    // source actually stated it, and it never replaces the part manufacturer.
+    if (listing.part_type || listing.vehicle_make) {
+      setAutomotive((current) => ({
+        ...current,
+        part_type: current.part_type || listing.part_type || '',
+        vehicle_make: current.vehicle_make || listing.vehicle_make || '',
+      }));
+    }
+    // Keeps the reviewed AI copy from being rewritten by the rule-based optimizer after save.
+    setValue('disable_auto_seo', true, { shouldDirty: true });
+    if (result.category?.category_id) {
+      if (result.category.created) queryClient.invalidateQueries({ queryKey: queryKeys.categories.lists() });
+      setValue('category_id', result.category.category_id, dirty);
+    }
+  };
 
   // Create product mutation
   const createProductMutation = useMutation({
@@ -211,6 +247,24 @@ export default function NewProductPage() {
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             {/* Main Content */}
             <div className="lg:col-span-2 space-y-6">
+              <AIListingAssist
+                locale={locale}
+                getCurrent={() => ({
+                  name: watch('name'),
+                  sku: watch('sku'),
+                  brand: watch('brand'),
+                  model: watch('model'),
+                  part_number: watch('part_number'),
+                  part_type: automotive.part_type,
+                  vehicle_make: automotive.vehicle_make,
+                  description: watch('description'),
+                  warranty_period: watch('warranty_period'),
+                  lead_time: watch('lead_time'),
+                  category_id: Number(watch('category_id')) || undefined,
+                })}
+                onApply={applyAIListing}
+              />
+
               {/* Basic Information */}
               <div className="bg-white shadow rounded-lg p-6">
                 <h3 className="text-lg font-medium text-gray-900 mb-4">{t('products.basic.title', locale === 'zh' ? '基础信息' : 'Basic Information')}</h3>

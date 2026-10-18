@@ -69,7 +69,7 @@ const navigation = [
   { key: 'nav.news', name: 'News & Articles', href: '/admin/news', icon: NewspaperIcon },
   { key: 'nav.sitePages', name: 'Site Pages', href: '/admin/site-pages', icon: DocumentTextIcon },
   { key: 'nav.aiAssistant', name: 'AI Assistant', href: '/admin/ai-assistant', icon: SparklesIcon },
-  { key: 'nav.aiSeo', name: 'AI SEO Records', href: '/admin/ai-seo', icon: SparklesIcon },
+  { key: 'nav.aiSeo', name: 'AI Job Center', href: '/admin/ai-seo', icon: SparklesIcon },
 ];
 
 const retailOnly = new Set(['/admin/orders','/admin/customers','/admin/tickets','/admin/coupons','/admin/shipping-rates','/admin/paypal','/admin/ebay-import-drafts']);

@@ -492,13 +492,6 @@ func (ac *AIAgentController) UpdateProfile(c *gin.Context) {
 		if exists {
 			return errAIProfileNameConflict
 		}
-		activeJobs, err := countActiveAIAgentSEOJobsForProfile(tx, profileID)
-		if err != nil {
-			return err
-		}
-		if activeJobs > 0 {
-			return errAIProfileInUse
-		}
 		isActive := setting.ActiveProfileID != nil && *setting.ActiveProfileID == profile.ID
 		if isActive && setting.Enabled && profile.APIKeyEnc == "" {
 			return errAIProfileNeedsAPIKey
@@ -522,10 +515,6 @@ func (ac *AIAgentController) UpdateProfile(c *gin.Context) {
 	}
 	if errors.Is(err, errAIProfileNameConflict) {
 		c.JSON(http.StatusConflict, models.APIResponse{Success: false, Message: "An AI profile with this name already exists"})
-		return
-	}
-	if errors.Is(err, errAIProfileInUse) {
-		c.JSON(http.StatusConflict, models.APIResponse{Success: false, Message: "Pause is not enough to edit this AI: finish the queued, running, or paused SEO job first"})
 		return
 	}
 	if errors.Is(err, errAIProfileNeedsAPIKey) {
@@ -557,13 +546,6 @@ func (ac *AIAgentController) DeleteProfile(c *gin.Context) {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&profile, profileID).Error; err != nil {
 			return err
 		}
-		activeJobs, err := countActiveAIAgentSEOJobsForProfile(tx, profileID)
-		if err != nil {
-			return err
-		}
-		if activeJobs > 0 {
-			return errAIProfileInUse
-		}
 		result := tx.Delete(&profile)
 		if result.Error != nil {
 			return result.Error
@@ -575,10 +557,6 @@ func (ac *AIAgentController) DeleteProfile(c *gin.Context) {
 	})
 	if errors.Is(err, errActiveAIProfile) {
 		c.JSON(http.StatusConflict, models.APIResponse{Success: false, Message: "Switch to another AI profile before deleting the active profile"})
-		return
-	}
-	if errors.Is(err, errAIProfileInUse) {
-		c.JSON(http.StatusConflict, models.APIResponse{Success: false, Message: "This AI profile is still used by a queued, running, or paused SEO job"})
 		return
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {

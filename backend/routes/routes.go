@@ -216,6 +216,12 @@ func SetupRoutes(r *gin.Engine) {
 				aiAgent.POST("/article-draft", aiAgentController.GenerateArticleDraft)
 				aiAgent.POST("/prices/preview", aiAgentController.PreviewPrices)
 				aiAgent.POST("/apply", aiAgentController.Apply)
+				// Unified AI optimization in the fixed listing format, plus pasted bulk import.
+				aiAgent.POST("/listing/generate", aiAgentController.GenerateListing)
+				aiAgent.POST("/listing/jobs", aiAgentController.StartListingJob)
+				aiAgent.POST("/listing/import/preview", aiAgentController.PreviewListingImport)
+				aiAgent.POST("/listing/import/categories", aiAgentController.SuggestListingCategories)
+				aiAgent.POST("/listing/import/apply", aiAgentController.ApplyListingImport)
 				aiAgent.POST("/seo/jobs", aiAgentController.StartSelectedSEO)
 				aiAgent.POST("/seo/candidates", aiAgentController.StartCandidateSEO)
 				aiAgent.POST("/seo/category-jobs", middleware.AdminOnly(), aiAgentController.StartCategoryOptimizationJob)
@@ -228,7 +234,7 @@ func SetupRoutes(r *gin.Engine) {
 				aiAgent.GET("/seo/jobs/:id/items", aiAgentController.ListSEOJobItems)
 				aiAgent.POST("/seo/jobs/:id/pause", aiAgentController.PauseSEOJob)
 				aiAgent.POST("/seo/jobs/:id/resume", aiAgentController.ResumeSEOJob)
-				aiAgent.POST("/seo/jobs/:id/end", aiAgentController.EndPausedSEOJob)
+				aiAgent.POST("/seo/jobs/:id/end", aiAgentController.EndSEOJob)
 				aiAgent.GET("/seo/stats", aiAgentController.GetSEOStats)
 				// Classification review queue: candidates that could not be published
 				// automatically are decided by an administrator here, which is the
