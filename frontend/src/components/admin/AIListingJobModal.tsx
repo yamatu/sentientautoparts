@@ -105,8 +105,8 @@ export default function AIListingJobModal({ open, locale, isAdmin, selectedIds, 
             <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900"><SparklesIcon className="h-5 w-5 text-violet-600" />{zh ? 'AI 智能优化' : 'AI smart optimization'}</h2>
             <p className="mt-1 text-sm text-gray-600">
               {zh
-                ? '逐个质检产品：资料完整且 SEO 合格的直接跳过；旧字段产品（缺型号/零件号/品牌/配件类型）、分类缺失、描述单薄或 SEO 不合格的，按固定格式联网检索并重写全部内容。价格、库存和适配车型不会凭空生成。'
-                : 'Each product is checked first: healthy listings are skipped; legacy, uncategorized, thin or poorly optimized ones are researched and rewritten in the fixed format. Price, stock and fitment are never invented.'}
+                ? '逐个质检产品：资料完整且 SEO 合格的直接跳过；缺型号/零件号/品牌、OE 参考号、适配车型、规格参数，或分类缺失、描述单薄、SEO 不合格的，联网检索后按固定格式生成：名称、简介、Key Features 描述、汽配规格、OE/交叉参考号、适配车型清单与 SEO。已有的规格、OE 号和适配车型只补不改；价格和库存不会改动，查不到的资料留空不编造。'
+                : 'Each product is checked first: healthy listings are skipped; ones missing identity, OE references, fitment or specs, or with thin copy/SEO, are researched and rewritten in the fixed format (specs, OE/interchange references, fitment, SEO). Stored specs/OE/fitment are only extended; price and stock are never changed and nothing is invented.'}
             </p>
           </div>
           <button type="button" onClick={onClose} disabled={starting} className="rounded-md p-1 text-gray-500 hover:bg-gray-100 disabled:opacity-50" aria-label={zh ? '关闭' : 'Close'}><XMarkIcon className="h-5 w-5" /></button>

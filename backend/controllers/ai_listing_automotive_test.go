@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"fanuc-backend/models"
 	"fanuc-backend/services"
 )
 
@@ -62,5 +63,51 @@ func TestListingFallbackPathFollowsCatalogueDomain(t *testing.T) {
 	got = listingFallbackPath(record)
 	if len(got) == 0 || got[0] != "Fanuc" {
 		t.Fatalf("non-automotive fallback path = %v, want a brand-rooted path", got)
+	}
+}
+
+func TestParseAIListingOutputReadsAutomotiveBlock(t *testing.T) {
+	t.Setenv("CATALOG_DOMAIN", "automotive")
+	raw := `{"product_name":"AC Compressor for Mazda MX-5 Miata NC (2005–2015) 92600-00C33 | SAP-11430","sku":"SAP-11430","brand":"Calsonic Kansei","model":"CR08","part_number":"92600-00C33","part_type":"A/C Compressor","vehicle_make":"Mazda","category_path":["A/C Compressors","Mazda"],"existing_category_id":0,"weight_kg":"4.4 kg","short_description":"12V CR08 rotary vane A/C compressor (SKU: SAP-11430).","description":"The SAP-11430 (OE: 92600-00C33) is a direct-fit compressor.","meta_title":"Mazda MX-5 AC Compressor 92600-00C33 | SAP-11430","meta_description":"x","meta_keywords":"SAP-11430","compressor_type":"CR08","refrigerant":"R134a","voltage":"12V","pulley_grooves":"6","pulley_diameter":"118 mm","displacement":"80 cc/rev","oil_type":"PAG 100","oil_capacity":"130 ml","oe_numbers":["92600-00C33","NE51-61-450B"],"interchange_numbers":"NRF 320222\nWALKER WCP00542","fitments":[{"make":"Mazda","model":"MX-5 Mk III (NC)","engine":"1.8L","year_from":2005,"year_to":"2014","notes":"LHD/RHD"},{"make":"","model":"no make"}],"fitment_notes":"For reference only."}`
+	output, err := parseAIListingOutput(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := output.Record
+	if r.CompressorType != "CR08" || r.Refrigerant != "R134a" || r.PulleyDiameter != "118 mm" || r.OilCapacity != "130 ml" {
+		t.Errorf("specs = %+v", r)
+	}
+	if strings.Join(r.OENumbers, "|") != "92600-00C33|NE51-61-450B" || strings.Join(r.InterchangeNumbers, "|") != "NRF 320222|WALKER WCP00542" {
+		t.Errorf("references = %v / %v", r.OENumbers, r.InterchangeNumbers)
+	}
+	// The make-less row falls back to the listing's vehicle make.
+	if len(r.Fitments) != 2 || r.Fitments[0].YearTo == nil || *r.Fitments[0].YearTo != 2014 || r.Fitments[1].Make != "Mazda" {
+		t.Errorf("fitments = %+v", r.Fitments)
+	}
+}
+
+func TestListingAutomotiveUpdatesNeverReplaceVerifiedData(t *testing.T) {
+	product := models.Product{}
+	product.Refrigerant = "R1234yf"
+	product.OENumbers = []string{"92600-00C33"}
+	product.Fitments = []models.VehicleFitment{{Make: "Mazda", Model: "MX-5"}}
+	record := services.ProductListingRecord{
+		Refrigerant: "R134a", Voltage: "12V",
+		OENumbers: []string{"92600-00C33", "NE51-61-450B"},
+		Fitments:  []models.VehicleFitment{{Make: "Mazda", Model: "Other"}},
+	}
+	updates := map[string]any{}
+	listingAutomotiveUpdates(product, record, updates)
+	if _, ok := updates["refrigerant"]; ok {
+		t.Error("a stored refrigerant was overwritten")
+	}
+	if updates["voltage"] != "12V" {
+		t.Errorf("empty voltage was not filled: %v", updates)
+	}
+	if updates["oe_numbers"] != `["92600-00C33","NE51-61-450B"]` {
+		t.Errorf("oe merge = %v", updates["oe_numbers"])
+	}
+	if _, ok := updates["fitments"]; ok {
+		t.Error("stored fitment rows were replaced")
 	}
 }

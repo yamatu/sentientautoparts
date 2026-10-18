@@ -17,12 +17,12 @@ import ShippingQuoteCalculator from '@/components/admin/ShippingQuoteCalculator'
 import TranslationEditor from '@/components/admin/TranslationEditor';
 import AIListingAssist from '@/components/admin/AIListingAssist';
 import type { AIListingGenerateResult } from '@/services/ai-listing.service';
-import { ProductService, CategoryService, CommercePolicyService, ProductSpecService } from '@/services';
+import { ProductService, CategoryService, CommercePolicyService } from '@/services';
 import { queryKeys } from '@/lib/react-query';
 import { ProductCreateRequest, type Product, type Category, type CommercePolicySetting } from '@/types';
 import { getErrorMessage } from '@/lib/errors';
 import AutomotiveFieldsEditor from '@/components/admin/AutomotiveFieldsEditor';
-import { EMPTY_AUTOMOTIVE, automotiveFromProduct, type AutomotiveFields } from '@/types/automotive';
+import { EMPTY_AUTOMOTIVE, automotiveFromProduct, mergeListingAutomotive, type AutomotiveFields } from '@/types/automotive';
 import { buildAutomotiveSEO } from '@/lib/automotive-seo';
 import { B2B_MODE } from '@/types/storefront';
 import {
@@ -82,24 +82,6 @@ export default function EditProductPage() {
     ? { ...FALLBACK_COMMERCE_POLICY, ...commercePolicy }
     : FALLBACK_COMMERCE_POLICY;
 
-  // Model-number (型号) specification research. The run is queued as an AI task
-  // so a slow web lookup cannot block this form; results always land in the
-  // review queue at /admin/spec-drafts — nothing is written to this product here.
-  const specResearchMutation = useMutation({
-    mutationFn: () => ProductSpecService.startProductResearchJob(productId as number, { use_ai: true }),
-    onSuccess: (job) => {
-      toast.success(
-        locale === 'zh'
-          ? `已加入检索队列（任务 ${job.id.slice(0, 8)}）— 进度与审核请在“型号参数检索”页面查看`
-          : `Research queued (task ${job.id.slice(0, 8)}) — track progress and review under Spec Research`,
-      );
-      queryClient.invalidateQueries({ queryKey: ['spec-drafts'] });
-    },
-    onError: (error: unknown) => {
-      toast.error(getErrorMessage(error, locale === 'zh' ? '型号参数检索失败' : 'Specification research failed'));
-    },
-  });
-
 	const watchedWeight = Number(watch('weight') || 0);
 	const watchedPrice = Number(watch('price') || 0);
 
@@ -133,15 +115,9 @@ export default function EditProductPage() {
     if (listing.meta_title) setValue('meta_title', listing.meta_title, dirty);
     if (listing.meta_description) setValue('meta_description', listing.meta_description, dirty);
     if (listing.meta_keywords) setValue('meta_keywords', listing.meta_keywords, dirty);
-    // Automotive taxonomy: a part type or vehicle make is only written when the
-    // source actually stated it, and it never replaces the part manufacturer.
-    if (listing.part_type || listing.vehicle_make) {
-      setAutomotive((current) => ({
-        ...current,
-        part_type: current.part_type || listing.part_type || '',
-        vehicle_make: current.vehicle_make || listing.vehicle_make || '',
-      }));
-    }
+    // Specs, OE / cross references and fitment fill the automotive block without
+    // replacing what is already entered; a vehicle make is never the part brand.
+    setAutomotive((current) => mergeListingAutomotive(current, listing));
     // Keeps the reviewed AI copy from being rewritten by the rule-based optimizer after save.
     setValue('disable_auto_seo', true, { shouldDirty: true });
     if (result.category?.category_id) {
@@ -419,8 +395,9 @@ export default function EditProductPage() {
                   brand: watch('brand'),
                   model: watch('model'),
                   part_number: watch('part_number'),
-                  part_type: automotive.part_type,
-                  vehicle_make: automotive.vehicle_make,
+                  ...automotive,
+                  oe_numbers: automotive.oe_numbers.map((value) => value.trim()).filter(Boolean),
+                  interchange_numbers: automotive.interchange_numbers.map((value) => value.trim()).filter(Boolean),
                   description: watch('description'),
                   warranty_period: watch('warranty_period'),
                   lead_time: watch('lead_time'),
@@ -566,20 +543,6 @@ export default function EditProductPage() {
 						className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
 						placeholder={locale === 'zh' ? '例如：10S20C' : 'e.g., 10S20C'}
 					/>
-					<button
-						type="button"
-						onClick={() => specResearchMutation.mutate()}
-						disabled={specResearchMutation.isPending || !productId}
-						className="mt-2 inline-flex items-center rounded-md border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-800 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-					>
-						{specResearchMutation.isPending
-							? locale === 'zh'
-								? '检索中…'
-								: 'Researching…'
-							: locale === 'zh'
-								? '按型号检索参数（需审核）'
-								: 'Research specs by model number (review required)'}
-					</button>
 				  </div>
 
 				  <div>

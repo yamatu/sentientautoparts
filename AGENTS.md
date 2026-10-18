@@ -189,7 +189,7 @@ The single source of truth for the list above is `controllers.modelDerivedFields
 - **Catalogue products are always researched on the AI job queue** (`controllers/ai_seo_spec_jobs.go`, `aiSEOSpecSelectionMode = "spec_research"`): a synchronous batch timed out, showed no progress and lost work on restart. Job kinds that only write drafts (`category_optimization`, `spec_research`) are the ones `ResumeSEOJob` requeues for and `controllers.finalizeDraftJob` finalizes; content jobs must never be requeued.
 - A spec job **never calls `publishAIAgentSEOJobCompletion`** — it publishes nothing, so there is no cache to invalidate and no URL to submit. It also has no dedicated capacity cap; it counts against `maxActiveAISEOJobs=8` only, because `validateAISEOJobCapacity`'s signature is test-asserted.
 - UI: `Admin → eBay Drafts` (`/admin/ebay-import-drafts`) is the single hub for the scraped-listing workflow, with two tabs: **采集草稿** (the queue plus the AI review pass below) and **市场调研 / 价格** (eBay market quotes, price suggestions, product-profile drafts). The former standalone `/admin/ebay-market` page now redirects to `?tab=market` — the two are one workflow (scrape → review → price → publish), so they must not drift apart.
-- The spec-draft **review page was removed**; `Admin → Spec Research` no longer exists as a nav entry. The `/admin/products/spec-drafts` **endpoints remain** and are still used by the product edit form ("Research specs by model number") and by `ProductProfileReviewPanel`. Deleting the page did not delete the API.
+- The spec-draft **review page was removed**; `Admin → Spec Research` no longer exists as a nav entry. The `/admin/products/spec-drafts` **endpoints remain** and are still used by `ProductProfileReviewPanel`. The product form and the products list no longer have their own spec-research buttons: specs, OE/interchange references and fitment now come from the unified AI listing pipeline. Deleting the page did not delete the API.
 - Every brand-agnostic detail of the pipeline is covered by `docs/SPEC_RESEARCH.md` (services) and `docs/EBAY_DRAFT_REVIEW.md` (the automated review pass).
 - Scraped titles and descriptions are **HTML and Markdown**, not text. `services/description_sanitizer.go` (`SanitizeListingTitle`, `SanitizeListingDescription`, `ShortenListingDescription`) strips scripts/styles/iframes, converts block tags to line breaks, decodes entities twice and drops seller-template boilerplate; it is called from `cleanDraftDescription` and `normalizeDraftTitle` at the point a draft is built, so nothing downstream has to re-clean. The storefront renders descriptions as `whitespace-pre-line` plain text, so an unsanitised description shows its tags to a customer.
 - Draft images are **optional per upload**: `EbayImportDraftUploadRequest.IncludeImages` (`*bool`, `WantsImages()` defaults to keeping them) → `BuildEbayImportDraftWithOptions`. With `false`, `BuildEbayImportDraftWithOptions` clears both `ImageSourceURLs` **and** `MainImageSourceURL` at the build site; clearing only the list would still hotlink the seller's photo, and filtering later would let a step that assumes the field is populated reattach it. The plugin panel exposes this as 「上传产品图片」 (checked by default, `include_images` in the upload body, version 3.6.0).
@@ -202,7 +202,17 @@ The single source of truth for the list above is `controllers.modelDerivedFields
 
 `Admin → Products` offers 「AI 智能优化」 (a background job over the current
 selection) and 「粘贴资料批量导入」 (fixed-format pasted listings); the product
-form embeds the same pipeline as `AIListingAssist`.
+form embeds the same pipeline as `AIListingAssist`. These are the only AI entry
+points on the products page — the former AI SEO / auto-candidate / retry-failed /
+auto-classify / spec-research buttons were removed as duplicates (retry and
+end-job live in the AI Job Center).
+
+- **The listing format includes the automotive block**: specs (compressor series,
+  refrigerant, voltage, pulley grooves/diameter, displacement, oil type/capacity),
+  `oe_numbers`, `interchange_numbers`, `fitments` and `fitment_notes`. AI output
+  only fills empty spec columns, appends unseen OE/interchange references and
+  writes fitment rows only when the product has none (`listingAutomotiveUpdates`).
+  The quality gate reports missing OE numbers, fitment and compressor specs.
 
 - **Categories are part type > vehicle make, never brand > category > type.**
   `services.ResolveAutomotiveListingCategory` refuses to create a root

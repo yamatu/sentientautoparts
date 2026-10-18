@@ -74,6 +74,18 @@ func EvaluateListingQuality(product models.Product) []ListingQualityIssue {
 	if strings.TrimSpace(product.MetaKeywords) == "" {
 		add("meta_keywords_missing", "SEO 关键词为空")
 	}
+	if AutomotiveMode() {
+		if len(product.OENumbers) == 0 {
+			add("oe_missing", "缺少 OE / OEM 参考号")
+		}
+		if len(product.Fitments) == 0 && strings.TrimSpace(product.FitmentNotes) == "" {
+			add("fitment_missing", "缺少适配车型清单")
+		}
+		if CanonicalAutomotivePartType(product.PartType) == "A/C Compressor" && strings.TrimSpace(product.CompressorType) == "" &&
+			strings.TrimSpace(product.Refrigerant) == "" && strings.TrimSpace(product.Voltage) == "" && strings.TrimSpace(product.PulleyGrooves) == "" {
+			add("specs_missing", "缺少压缩机规格参数（型号系列/制冷剂/电压/皮带轮）")
+		}
+	}
 	return issues
 }
 

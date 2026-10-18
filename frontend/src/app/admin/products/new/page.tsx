@@ -21,7 +21,7 @@ import { ProductService, CategoryService, CommercePolicyService } from '@/servic
 import { ProductCreateRequest, type Category, type CommercePolicySetting } from '@/types';
 import { getErrorMessage } from '@/lib/errors';
 import AutomotiveFieldsEditor from '@/components/admin/AutomotiveFieldsEditor';
-import { EMPTY_AUTOMOTIVE, type AutomotiveFields } from '@/types/automotive';
+import { EMPTY_AUTOMOTIVE, mergeListingAutomotive, type AutomotiveFields } from '@/types/automotive';
 import { buildAutomotiveSEO } from '@/lib/automotive-seo';
 import { B2B_MODE } from '@/types/storefront';
 import {
@@ -119,15 +119,9 @@ export default function NewProductPage() {
     if (listing.meta_title) setValue('meta_title', listing.meta_title, dirty);
     if (listing.meta_description) setValue('meta_description', listing.meta_description, dirty);
     if (listing.meta_keywords) setValue('meta_keywords', listing.meta_keywords, dirty);
-    // Automotive taxonomy: a part type or vehicle make is only written when the
-    // source actually stated it, and it never replaces the part manufacturer.
-    if (listing.part_type || listing.vehicle_make) {
-      setAutomotive((current) => ({
-        ...current,
-        part_type: current.part_type || listing.part_type || '',
-        vehicle_make: current.vehicle_make || listing.vehicle_make || '',
-      }));
-    }
+    // Specs, OE / cross references and fitment fill the automotive block without
+    // replacing what is already entered; a vehicle make is never the part brand.
+    setAutomotive((current) => mergeListingAutomotive(current, listing));
     // Keeps the reviewed AI copy from being rewritten by the rule-based optimizer after save.
     setValue('disable_auto_seo', true, { shouldDirty: true });
     if (result.category?.category_id) {
@@ -255,8 +249,9 @@ export default function NewProductPage() {
                   brand: watch('brand'),
                   model: watch('model'),
                   part_number: watch('part_number'),
-                  part_type: automotive.part_type,
-                  vehicle_make: automotive.vehicle_make,
+                  ...automotive,
+                  oe_numbers: automotive.oe_numbers.map((value) => value.trim()).filter(Boolean),
+                  interchange_numbers: automotive.interchange_numbers.map((value) => value.trim()).filter(Boolean),
                   description: watch('description'),
                   warranty_period: watch('warranty_period'),
                   lead_time: watch('lead_time'),

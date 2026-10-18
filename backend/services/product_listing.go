@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"fanuc-backend/models"
 )
 
 // ProductListingRecord is one product in the fixed "Basic Information / SEO
@@ -33,6 +35,20 @@ type ProductListingRecord struct {
 	MetaTitle        string   `json:"meta_title"`
 	MetaDescription  string   `json:"meta_description"`
 	MetaKeywords     string   `json:"meta_keywords"`
+
+	// Automotive specification and fitment block. Unknown values stay empty.
+	CompressorType     string                  `json:"compressor_type,omitempty"`
+	Refrigerant        string                  `json:"refrigerant,omitempty"`
+	Voltage            string                  `json:"voltage,omitempty"`
+	PulleyGrooves      string                  `json:"pulley_grooves,omitempty"`
+	PulleyDiameter     string                  `json:"pulley_diameter,omitempty"`
+	Displacement       string                  `json:"displacement,omitempty"`
+	OilType            string                  `json:"oil_type,omitempty"`
+	OilCapacity        string                  `json:"oil_capacity,omitempty"`
+	OENumbers          []string                `json:"oe_numbers,omitempty"`
+	InterchangeNumbers []string                `json:"interchange_numbers,omitempty"`
+	Fitments           []models.VehicleFitment `json:"fitments,omitempty"`
+	FitmentNotes       string                  `json:"fitment_notes,omitempty"`
 }
 
 const (
@@ -93,7 +109,7 @@ var listingSectionHeaders = map[string]bool{
 }
 
 var (
-	listingLabelPattern     = regexp.MustCompile(`^\s*(?:[-*•#>]+\s*)*(?:\*\*)?\s*([^:：]{1,48}?)\s*(?:\*\*)?\s*[:：]\s*(?:\*\*)?\s*(.*)$`)
+	listingLabelPattern     = regexp.MustCompile(`^\s*(?:[-*•#>]+\s*)*(?:\*\*)?\s*([^:：]{1,64}?)\s*(?:\*\*)?\s*[:：]\s*(?:\*\*)?\s*(.*)$`)
 	listingSeparatorPattern = regexp.MustCompile(`^\s*[-=_*~]{3,}\s*$`)
 	listingParenPattern     = regexp.MustCompile(`\s*[\(（][^\)）]*[\)）]`)
 	listingNumberPattern    = regexp.MustCompile(`\d[\d,]*(?:\.\d+)?`)
@@ -138,8 +154,9 @@ func isListingNoteLine(line string) bool {
 }
 
 type listingDraft struct {
-	values map[string]string
-	order  []string
+	values   map[string]string
+	order    []string
+	fitments []map[string]string
 }
 
 func (draft *listingDraft) has(key string) bool {
@@ -153,7 +170,7 @@ func (draft *listingDraft) empty() bool {
 			return false
 		}
 	}
-	return true
+	return len(draft.fitments) == 0
 }
 
 // ParseProductListingText splits pasted text into listing records. A new record
@@ -183,15 +200,30 @@ func ParseProductListingText(text string) []ProductListingRecord {
 			flush()
 			continue
 		}
+		// "Fitment 1" opens a vehicle row whose Make/Model/Engine labels must not
+		// be read as the listing's own vehicle make or model.
+		if currentKey != listingFieldDescription && listingFitmentHeaderPattern.MatchString(line) {
+			current.fitments = append(current.fitments, map[string]string{})
+			currentKey = listingFieldFitmentRow
+			continue
+		}
 		if match := listingLabelPattern.FindStringSubmatch(line); match != nil {
-			if key, ok := listingLabelAliases[normalizeListingLabel(match[1])]; ok {
+			label := normalizeListingLabel(match[1])
+			value := strings.TrimSpace(strings.Trim(match[2], "*"))
+			if currentKey == listingFieldFitmentRow {
+				if key, ok := listingFitmentLabelAliases[label]; ok {
+					current.fitments[len(current.fitments)-1][key] = value
+					continue
+				}
+			}
+			if key, ok := listingLabelAliases[label]; ok && !(currentKey == listingFieldDescription && listingSpecLabels[key]) {
 				if (key == listingFieldName || key == listingFieldSKU) && current.has(key) {
 					flush()
 				}
 				if !current.has(key) {
 					current.order = append(current.order, key)
 				}
-				current.values[key] = strings.TrimSpace(strings.Trim(match[2], "*"))
+				current.values[key] = value
 				currentKey = key
 				continue
 			}
@@ -200,12 +232,12 @@ func ParseProductListingText(text string) []ProductListingRecord {
 			currentKey = ""
 			continue
 		}
-		if currentKey == "" || currentKey == listingFieldIgnore {
+		if currentKey == "" || currentKey == listingFieldIgnore || currentKey == listingFieldFitmentRow {
 			continue
 		}
 		existing := current.values[currentKey]
 		separator := " "
-		if currentKey == listingFieldDescription {
+		if currentKey == listingFieldDescription || isListingListField(currentKey) {
 			separator = "\n"
 		}
 		if strings.TrimSpace(existing) == "" {
@@ -218,7 +250,7 @@ func ParseProductListingText(text string) []ProductListingRecord {
 
 	records := make([]ProductListingRecord, 0, len(drafts))
 	for _, draft := range drafts {
-		record := listingRecordFromValues(draft.values)
+		record := listingRecordFromValues(draft.values, draft.fitments)
 		if record.SKU == "" && record.Name == "" {
 			continue
 		}
@@ -227,7 +259,7 @@ func ParseProductListingText(text string) []ProductListingRecord {
 	return records
 }
 
-func listingRecordFromValues(values map[string]string) ProductListingRecord {
+func listingRecordFromValues(values map[string]string, fitmentValues []map[string]string) ProductListingRecord {
 	record := ProductListingRecord{
 		Name:             truncateListingText(cleanListingInline(values[listingFieldName]), 255),
 		SKU:              cleanListingIdentifier(values[listingFieldSKU]),
@@ -245,7 +277,23 @@ func listingRecordFromValues(values map[string]string) ProductListingRecord {
 		MetaTitle:        truncateListingText(cleanListingInline(values[listingFieldMetaTitle]), 255),
 		MetaDescription:  truncateListingText(cleanListingInline(values[listingFieldMetaDesc]), 1000),
 		MetaKeywords:     truncateListingText(cleanListingInline(values[listingFieldMetaKeywords]), 1000),
+
+		CompressorType:     values[listingFieldCompressorType],
+		Refrigerant:        values[listingFieldRefrigerant],
+		Voltage:            values[listingFieldVoltage],
+		PulleyGrooves:      values[listingFieldPulleyGrooves],
+		PulleyDiameter:     values[listingFieldPulleyDiameter],
+		Displacement:       values[listingFieldDisplacement],
+		OilType:            values[listingFieldOilType],
+		OilCapacity:        values[listingFieldOilCapacity],
+		OENumbers:          []string{values[listingFieldOENumbers]},
+		InterchangeNumbers: []string{values[listingFieldInterchangeNumbers]},
+		FitmentNotes:       values[listingFieldFitmentNotes],
 	}
+	for _, fitment := range fitmentValues {
+		record.Fitments = append(record.Fitments, listingFitmentFromValues(fitment))
+	}
+	sanitizeListingAutomotive(&record)
 	record.Price = ParseListingPrice(values[listingFieldPrice])
 	record.StockQuantity = parseListingStock(values[listingFieldStock])
 	record.WeightKg = ParseListingWeightKg(values[listingFieldWeight])
@@ -280,6 +328,7 @@ func SanitizeListingRecord(record *ProductListingRecord) {
 	if record.WeightKg != nil && (*record.WeightKg <= 0 || *record.WeightKg > 100000) {
 		record.WeightKg = nil
 	}
+	sanitizeListingAutomotive(record)
 	NormalizeListingRecord(record)
 }
 
@@ -299,6 +348,9 @@ func NormalizeListingRecord(record *ProductListingRecord) {
 	// known type is folded to the display value; unknown text is kept as a hint.
 	if AutomotiveMode() {
 		record.PartType = CanonicalAutomotivePartType(record.PartType)
+	}
+	if record.VehicleMake == "" && len(record.Fitments) > 0 {
+		record.VehicleMake = record.Fitments[0].Make
 	}
 	if record.ShortDescription == "" && record.Description != "" {
 		record.ShortDescription = DeriveListingShortDescription(record.Description)

@@ -59,8 +59,8 @@ export default function AIListingAssist({ locale, productId, getCurrent, onApply
           </h3>
           <p className="mt-1 text-xs leading-5 text-violet-800">
             {zh
-              ? '根据当前名称 / SKU / 型号联网检索资料，按固定格式重写名称、型号、零件号、描述、SEO，并按「配件类型 > 车型」匹配或创建分类。品牌不会被改成车型，价格、库存与适配信息不会凭空生成。'
-              : 'Researches the part online and rewrites name, model, part number, description and SEO in the fixed format, matching or creating the part type > vehicle make category. A vehicle make is never written as the brand, and price, stock and fitment are never invented.'}
+              ? '根据当前名称 / SKU / OE 号联网检索，按固定格式生成：基础信息、简介与描述（Key Features）、汽配规格（压缩机系列/制冷剂/电压/皮带轮/排量/冷冻油）、OE 参考号、交叉参考号、适配车型清单与 SEO，并按「配件类型 > 车型」匹配分类。已填写的规格、OE 号和适配车型不会被覆盖，价格与库存不会改动。'
+              : 'Researches the part online and fills the fixed listing format: basic info, short/long description, A/C specs, OE and interchange references, vehicle fitment and SEO, matching the part type > vehicle make category. Existing specs, OE numbers and fitment are kept; price and stock are never changed.'}
           </p>
         </div>
         <button

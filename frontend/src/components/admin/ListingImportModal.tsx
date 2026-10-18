@@ -28,6 +28,18 @@ const FIELD_LABELS: Record<ListingImportFieldKey, [string, string]> = {
   meta_title: ['SEO 标题', 'SEO title'],
   meta_description: ['SEO 描述', 'SEO description'],
   meta_keywords: ['SEO 关键词', 'SEO keywords'],
+  compressor_type: ['压缩机系列', 'Compressor series'],
+  refrigerant: ['制冷剂', 'Refrigerant'],
+  voltage: ['电压', 'Voltage'],
+  pulley_grooves: ['皮带轮槽数', 'Pulley grooves'],
+  pulley_diameter: ['皮带轮直径', 'Pulley diameter'],
+  displacement: ['排量', 'Displacement'],
+  oil_type: ['冷冻油类型', 'Oil type'],
+  oil_capacity: ['冷冻油容量', 'Oil capacity'],
+  oe_numbers: ['OE / OEM 参考号', 'OE / OEM references'],
+  interchange_numbers: ['交叉参考号', 'Interchange references'],
+  fitments: ['适配车型清单', 'Vehicle fitment'],
+  fitment_notes: ['适配核对说明', 'Fitment notes'],
 };
 
 const CATEGORY_BATCH = 10;

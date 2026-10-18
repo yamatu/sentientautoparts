@@ -104,7 +104,6 @@ an empty result, not a wrong parameter.
 1. **Start research** — three entry points:
    - Admin → Spec Research (bare model number, no product row yet) — runs
      synchronously, because a single lookup is fast;
-   - the **Research specs by model number** button on the product edit form
      (next to the 型号 / Model field) — queues a one-product task;
    - select products in Admin → Products and press **Research Specs** — queues a
      task for the selection (`only_missing` skips products that already have

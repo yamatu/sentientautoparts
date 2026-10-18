@@ -6,6 +6,34 @@ pasted listings). The product create/edit form additionally offers an inline
 **AIListingAssist** panel. All three produce a *proposal* — nothing is published
 without an administrator saving/approving.
 
+## Listing format
+
+One listing (AI output, pasted import and the product form) carries:
+
+- **Basic information** — name, SKU, category, weight, part brand / manufacturer,
+  product / supplier model, primary part reference, warranty, delivery time,
+  short description and a description laid out as an opening paragraph followed by
+  `Key Features & Technical Highlights:` lines (the last one is always
+  `Fitment Verification: ...`).
+- **Auto part specs** — part type, vehicle make, compressor series, refrigerant,
+  voltage, pulley grooves, pulley diameter, displacement, oil type, oil capacity.
+- **OE / OEM references** and **cross / interchange references**, one per line.
+  AI output gets the compact spelling of every separated OE number added
+  (`services.ExpandListingOEVariants`).
+- **Vehicle fitment list** — `Fitment N` blocks (make, model, engine, source /
+  notes, start year, end year) plus the fitment verification note.
+- **SEO** — title, description, keywords.
+
+`services.ParseProductListingText` reads this exact layout: `Fitment N` opens a
+fitment row so its `Make`/`Model` labels do not overwrite the listing's own make
+and model, and spec labels such as `Refrigerant:` never end a description block
+(they are common feature lines). `TestParseAutomotiveListingFormat` holds a full
+sample.
+
+Writing rules: the job only fills empty spec columns, appends OE / interchange
+references that are not stored yet and writes fitment rows only when the product
+has none; a pasted import overwrites exactly the fields the administrator ticks.
+
 ## Taxonomy boundary (automotive)
 
 `CATALOG_DOMAIN=automotive` fixes the category tree at two levels:
@@ -60,7 +88,9 @@ placeholder survives or industrial brands reappear.
 `services.EvaluateListingQuality` decides whether a product needs work before any
 AI call, and `listingContentProblem` re-checks the model's answer. The contract:
 the description must name the exact part number/model, be long enough, contain no
-foreign brand mention and no invented specification. A failed answer is retried
+foreign brand mention and no invented specification. In automotive mode a product
+also fails the gate when it has no OE numbers, no fitment (rows or notes), or —
+for compressors — none of series / refrigerant / voltage / pulley grooves. A failed answer is retried
 once with the failure reason as feedback.
 
 ## Import

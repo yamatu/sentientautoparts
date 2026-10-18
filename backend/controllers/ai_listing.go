@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,32 +19,48 @@ import (
 	"gorm.io/gorm"
 )
 
-const aiListingSystemPrompt = `You are the senior catalog editor of an automotive air-conditioning parts store (A/C compressors, condensers, evaporator units and expansion valves for passenger cars and light commercial vehicles). Rewrite ONE product into the store's fixed listing format. Return one JSON object only, without Markdown, with exactly these keys:
-product_name, sku, brand, model, part_number, part_type, vehicle_make, category_path, existing_category_id, warranty_period, lead_time, weight_kg, short_description, description, meta_title, meta_description, meta_keywords.
+const aiListingSystemPrompt = `You are the senior catalog editor of an automotive air-conditioning parts store (A/C compressors, condensers, evaporator units and expansion valves for passenger cars and light commercial vehicles). Research ONE product and write it in the store's fixed listing format. Return one JSON object only, without Markdown, with exactly these keys:
+product_name, sku, brand, model, part_number, part_type, vehicle_make, category_path, existing_category_id, warranty_period, lead_time, weight_kg, short_description, description, meta_title, meta_description, meta_keywords, compressor_type, refrigerant, voltage, pulley_grooves, pulley_diameter, displacement, oil_type, oil_capacity, oe_numbers, interchange_numbers, fitments, fitment_notes.
 
 Identity
-- Identify the product from CURRENT_PRODUCT (name, SKU, model, part number, brand, part type, vehicle make, old description) and WEB_EVIDENCE. The SKU is authoritative: copy it unchanged unless it is empty.
-- brand: the part manufacturer or supplier, e.g. "Denso", "Valeo", "Sanden", "Mahle". A vehicle make is never the brand.
-- model: the short type designation (e.g. "10PA17C"). part_number: the manufacturer order or OE number. When only one identifier exists use it for both.
+- Identify the product from CURRENT_PRODUCT (name, SKU, model, part number, brand, part type, vehicle make, OE numbers, fitment, old description) and WEB_EVIDENCE. The SKU is authoritative: copy it unchanged unless it is empty.
+- brand: the part manufacturer or OE-equivalent supplier, e.g. "Calsonic Kansei (OE Equivalent) / Aftermarket", "Denso", "Sanden", "Valeo". A vehicle make is never the brand.
+- model: the product / supplier model, normally the compressor series or unit type (e.g. "CR08", "10S17C", "7SEU17C"). When no series is known use the primary part number.
+- part_number: the primary OE / OEM part reference (e.g. "92600-00C33").
 - part_type: exactly one of the catalogue part types, or "" when the evidence does not establish it. Allowed values: PART_TYPE_OPTIONS.
-- vehicle_make: the car make the part fits (e.g. "Toyota"), only when CURRENT_PRODUCT or WEB_EVIDENCE states it, otherwise "". Never guess a make, model, year or engine.
+- vehicle_make: the car make the part fits (e.g. "Mazda"), only when CURRENT_PRODUCT or WEB_EVIDENCE states it, otherwise "".
 
-Copy (English US only, even if the input is in another language)
-- product_name: "<Brand> <part type> for <vehicle make / application> <Part number>", at most 120 characters, for example "Denso A/C Compressor for Toyota Corolla 447220-8732". Write an identifier only once when model and part number are equal.
-- description: 120-220 words of plain text, one or two paragraphs. Start with "The <Brand> <Part number> (<Model>) is ...". Explain what the part is, which vehicles or applications it fits when the evidence states it, its function, the key technical data the evidence supports (compressor type, displacement, pulley grooves and diameter, voltage, refrigerant, oil type and capacity, connections, weight) and typical applications. No HTML, no Markdown, no bullet symbols, no repeated sentences.
-- short_description: one or two sentences, at most 300 characters, naming the part type, brand, part number and use.
-- meta_title: 45-65 characters with brand, part number, model and part type; an optional " | <application>" suffix.
-- meta_description: 130-160 characters, one natural sentence with brand, part number, part type and the vehicle application when known, ending with a short call to action such as "Fast shipping. Request a quote."
-- meta_keywords: 6-10 comma-separated phrases: part number, model, brand + part number, part type phrases and vehicle-application phrases.
-- Never use the catch-all phrases "industrial automation", "uncategorized" or "generic spare" in meta_title, meta_description or meta_keywords; name the concrete part type instead.
+Listing copy (English US only, even if the input is in another language)
+- product_name: "<Part type> for <Vehicle make> <model / chassis> (<year range>) <primary OE number> | <SKU>", at most 120 characters, e.g. "AC Compressor for Mazda MX-5 Miata NC (2005–2015) 92600-00C33 | SAP-11430". Drop the parts that are unknown and write each identifier only once.
+- short_description: one or two sentences, at most 300 characters, covering voltage, series and design, "(SKU: <SKU>)", pulley grooves and diameter, the vehicles and engines it fits, and "Direct replacement for OE <two or three main OE numbers>.", e.g. "12V CR08 rotary vane A/C compressor (SKU: SAP-11430) with 6PK 118mm clutch pulley, engineered for 2005–2015 Mazda MX-5 Miata (NC) 1.8L & 2.0L. Direct replacement for OE 92600-00C33, NE51-61-450B, and NEY1-61-450."
+- description: plain text in exactly this layout, using \n line breaks, no HTML, no Markdown, no bullet symbols:
+  1. An opening paragraph of 45-90 words starting "The <SKU> (OE: <primary OE> / <second OE>) is a direct-fit ..." naming the part type, series or OE style, vehicle make, model, chassis code, year range and the engines it is designed for.
+  2. A blank line, then the line "Key Features & Technical Highlights:".
+  3. Four to six feature lines separated by blank lines, each "<Label>: <one or two sentences>", choosing labels such as Compressor Series, Clutch & Pulley, Refrigerant & Lubrication, Mounting & Ports, Electrical Connector, Core & Construction, Valve Type. Only state data the evidence supports.
+  4. The last feature line is always "Fitment Verification: Always verify the OEM part number (<main OE numbers>) and physical pulley/connector specifications on your original unit prior to ordering."
+  In total 130-260 words, never repeating a sentence.
+- meta_title: 45-70 characters, "<Vehicle make> <model> <part type> <primary OE> <second OE> | <SKU>", e.g. "Mazda MX-5 AC Compressor 92600-00C33 NE51-61-450B | SAP-11430".
+- meta_description: 130-170 characters naming vehicle and engines, part type, SKU, "Replaces OE ..." and the key specs, ending with "Contact us for a quote."
+- meta_keywords: 10-16 comma-separated terms: SKU and SKU without hyphen, the main OE numbers in hyphenated and compact spelling, vehicle phrases such as "Mazda MX-5 AC compressor" and the series phrase such as "CR08 compressor".
+- Never use the catch-all phrases "industrial automation", "uncategorized" or "generic spare" anywhere; name the concrete part type instead.
+
+Specifications (strings, always with their unit, "" when unknown)
+- compressor_type: compressor model / series (e.g. "CR08"); "" for other part types unless stated.
+- refrigerant (e.g. "R134a"), voltage ("12V"), pulley_grooves (number of grooves, e.g. "6"), pulley_diameter ("118 mm"), displacement ("80 cc/rev"), oil_type ("PAG 100"), oil_capacity ("130 ml").
+
+References and fitment
+- oe_numbers: array of every OE / OEM reference of this exact part, primary first, in original spelling. Keep every number already in CURRENT_PRODUCT.
+- interchange_numbers: array of aftermarket cross references written "<BRAND> <number>", e.g. "NRF 320222", "WALKER WCP00542".
+- fitments: array with one object per vehicle / engine / year range: {"make":"Mazda","model":"MX-5 Mk III (NC) / Miata / Roadster","engine":"1.8L L4 (1798cc, L8-DE / L8-VE, 93 kW / 126 HP)","year_from":2005,"year_to":2014,"notes":"OE 92600-00C33 / NE51-61-450B; Left-/Right-hand drive"}. year_from and year_to are integers or null.
+- fitment_notes: one or two sentences summarising the application, ending with a reminder that fitment data is for reference only and the original compressor label (main OE numbers) and connector/pulley specs must be verified before ordering.
 
 Facts
-- Use only facts found in CURRENT_PRODUCT or WEB_EVIDENCE. Leave out any specification you cannot support instead of guessing. Never invent certifications, stock, prices, condition, OE numbers, fitment years or delivery promises.
+- Use only facts found in CURRENT_PRODUCT or WEB_EVIDENCE, or facts that are well established for this exact OE number. Leave a specification, reference or fitment out ("" / [] / null) instead of guessing. Never invent certifications, stock, prices, condition or delivery promises.
 - weight_kg: net weight in kilograms as a number when the evidence or CURRENT_PRODUCT states it, otherwise null.
 - warranty_period and lead_time: copy CURRENT_PRODUCT values, or "" when unknown.
 
 Category: part type > vehicle make
-- category_path is an array of 1 or 2 names: [catalogue part type root, vehicle make], e.g. ["A/C Compressors", "Toyota"] or ["Auto Condensers"]. The first name must be one of the catalogue part-type roots; the second is the vehicle make from part_type/vehicle_make, and is omitted when the make is unknown.
+- category_path is an array of 1 or 2 names: [catalogue part type root, vehicle make], e.g. ["A/C Compressors", "Mazda"] or ["Auto Condensers"]. The first name must be one of the catalogue part-type roots; the second is the vehicle make from part_type/vehicle_make, and is omitted when the make is unknown.
 - CATEGORY_TREE lists existing categories as "id | path". Reuse an existing path whenever it fits the product, copy the names exactly and set existing_category_id to the id of the deepest node you reuse completely. Only when nothing fits propose a new vehicle-make name (Title Case) and set existing_category_id to 0. Never invent a new first level.
 - If the current category already fits, return its path and id.
 
@@ -58,7 +75,7 @@ const aiListingCategorySystemPrompt = `You classify automotive air-conditioning 
 const (
 	aiListingSelectionMode    = "listing_optimization"
 	aiListingOptionsMarker    = "[[VIBOCNC_LISTING_JOB_OPTIONS="
-	aiListingMaxTokens        = 4000
+	aiListingMaxTokens        = 6000
 	aiListingTreeMaxLines     = 500
 	aiListingImportMaxRecords = 500
 )
@@ -196,6 +213,66 @@ func listingFloat(value json.RawMessage) *float64 {
 	return nil
 }
 
+// listingStringList accepts a JSON array or a newline/comma separated string.
+func listingStringList(value json.RawMessage) []string {
+	if len(value) == 0 {
+		return nil
+	}
+	var list []string
+	if json.Unmarshal(value, &list) == nil {
+		return list
+	}
+	var text string
+	if json.Unmarshal(value, &text) == nil {
+		return []string{text}
+	}
+	return nil
+}
+
+func listingYearValue(value json.RawMessage) *int {
+	if len(value) == 0 {
+		return nil
+	}
+	var number int
+	if json.Unmarshal(value, &number) == nil {
+		if number < 1900 || number > 2100 {
+			return nil
+		}
+		return &number
+	}
+	var text string
+	if json.Unmarshal(value, &text) == nil {
+		if parsed, err := strconv.Atoi(strings.TrimSpace(text)); err == nil && parsed >= 1900 && parsed <= 2100 {
+			return &parsed
+		}
+	}
+	return nil
+}
+
+// listingFitmentsFromJSON reads the fitment array of an AI answer.
+func listingFitmentsFromJSON(value json.RawMessage) []models.VehicleFitment {
+	if len(value) == 0 {
+		return nil
+	}
+	var rows []map[string]json.RawMessage
+	if json.Unmarshal(value, &rows) != nil {
+		return nil
+	}
+	fitments := make([]models.VehicleFitment, 0, len(rows))
+	for _, row := range rows {
+		fitment := models.VehicleFitment{
+			Make:     aiSEOText(aiSEOField(row, "make", "vehicle_make", "brand")),
+			Model:    aiSEOText(aiSEOField(row, "model", "vehicle_model")),
+			Engine:   aiSEOText(aiSEOField(row, "engine")),
+			Notes:    aiSEOText(aiSEOField(row, "notes", "source", "source_notes")),
+			YearFrom: listingYearValue(aiSEOField(row, "year_from", "start_year", "from")),
+			YearTo:   listingYearValue(aiSEOField(row, "year_to", "end_year", "to")),
+		}
+		fitments = append(fitments, fitment)
+	}
+	return fitments
+}
+
 func parseAIListingOutput(raw string) (aiListingOutput, error) {
 	object, err := extractAISEOObject(raw)
 	if err != nil {
@@ -217,6 +294,19 @@ func parseAIListingOutput(raw string) (aiListingOutput, error) {
 		MetaTitle:        aiSEOText(aiSEOField(object, "meta_title", "seo_title", "metaTitle")),
 		MetaDescription:  aiSEOText(aiSEOField(object, "meta_description", "seo_description", "metaDescription")),
 		MetaKeywords:     aiSEOText(aiSEOField(object, "meta_keywords", "seo_keywords", "keywords")),
+
+		CompressorType:     aiSEOText(aiSEOField(object, "compressor_type", "compressor_model", "compressor_series", "series")),
+		Refrigerant:        aiSEOText(aiSEOField(object, "refrigerant")),
+		Voltage:            aiSEOText(aiSEOField(object, "voltage")),
+		PulleyGrooves:      aiSEOText(aiSEOField(object, "pulley_grooves", "grooves")),
+		PulleyDiameter:     aiSEOText(aiSEOField(object, "pulley_diameter")),
+		Displacement:       aiSEOText(aiSEOField(object, "displacement")),
+		OilType:            aiSEOText(aiSEOField(object, "oil_type")),
+		OilCapacity:        aiSEOText(aiSEOField(object, "oil_capacity")),
+		OENumbers:          listingStringList(aiSEOField(object, "oe_numbers", "oem_numbers", "oe_references")),
+		InterchangeNumbers: listingStringList(aiSEOField(object, "interchange_numbers", "cross_references", "cross_reference_numbers")),
+		Fitments:           listingFitmentsFromJSON(aiSEOField(object, "fitments", "fitment", "vehicle_fitments", "applications")),
+		FitmentNotes:       aiSEOText(aiSEOField(object, "fitment_notes", "fitment_note", "application_text")),
 	}
 	services.SanitizeListingRecord(&record)
 	output := aiListingOutput{
@@ -269,7 +359,17 @@ func listingProductReference(db *gorm.DB, product models.Product) map[string]any
 		"part_type":             product.PartType,
 		"vehicle_make":          product.VehicleMake,
 		"oe_numbers":            product.OENumbers,
+		"interchange_numbers":   product.InterchangeNumbers,
+		"fitments":              product.Fitments,
 		"fitment_notes":         truncateRunes(product.FitmentNotes, 2000),
+		"compressor_type":       product.CompressorType,
+		"refrigerant":           product.Refrigerant,
+		"voltage":               product.Voltage,
+		"pulley_grooves":        product.PulleyGrooves,
+		"pulley_diameter":       product.PulleyDiameter,
+		"displacement":          product.Displacement,
+		"oil_type":              product.OilType,
+		"oil_capacity":          product.OilCapacity,
 		"current_category_id":   product.CategoryID,
 		"current_category_path": strings.Join(services.CategoryPathNames(db, product.CategoryID), " > "),
 		"short_description":     truncateRunes(product.ShortDescription, 1000),
@@ -348,6 +448,7 @@ func generateAIListing(ctx context.Context, db *gorm.DB, setting *models.AIAgent
 				output.Record.Brand = services.CanonicalBrandName(product.Brand)
 			}
 			services.NormalizeListingRecord(&output.Record)
+			output.Record.OENumbers = services.ExpandListingOEVariants(output.Record.OENumbers)
 			output.CategoryPath = listingCategoryPath(output.Record.Brand, output.CategoryPath)
 			problem = listingContentProblem(product, output.Record)
 			if problem == "" {
@@ -359,7 +460,7 @@ func generateAIListing(ctx context.Context, db *gorm.DB, setting *models.AIAgent
 		}
 		feedback := "Your previous answer could not be parsed. Return exactly one complete JSON object with all required keys and nothing else."
 		if problem != "" {
-			feedback = "Your previous answer failed validation: " + problem + ". Fix it (the description must name the exact part number/model and be 120-220 words without repeated sentences) and return the complete JSON object again."
+			feedback = "Your previous answer failed validation: " + problem + ". Fix it (the description must name the exact SKU and part number, follow the opening paragraph + 'Key Features & Technical Highlights:' layout, be 130-260 words and never repeat a sentence) and return the complete JSON object again."
 		}
 		messages = append(messages, aiChatMessage{Role: "assistant", Content: truncateRunes(raw, 6000)}, aiChatMessage{Role: "user", Content: feedback})
 	}
@@ -462,6 +563,7 @@ func listingProductUpdates(db *gorm.DB, product models.Product, record services.
 			updates["vehicle_make"] = truncateRunes(vehicleMake, 100)
 		}
 	}
+	listingAutomotiveUpdates(product, record, updates)
 	defaultWarranty, defaultLeadTime := listingCommerceDefaults()
 	if strings.TrimSpace(product.WarrantyPeriod) == "" {
 		updates["warranty_period"] = listingFirst(record.WarrantyPeriod, defaultWarranty)
@@ -470,6 +572,44 @@ func listingProductUpdates(db *gorm.DB, product models.Product, record services.
 		updates["lead_time"] = listingFirst(record.LeadTime, defaultLeadTime)
 	}
 	return updates
+}
+
+func listingJSONColumn(value any) string {
+	encoded, err := json.Marshal(value)
+	if err != nil || string(encoded) == "null" {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+// listingAutomotiveUpdates fills empty spec columns, appends OE / interchange
+// references that are not stored yet and writes fitment rows only when the
+// product has none, so administrator-verified fitment is never replaced.
+func listingAutomotiveUpdates(product models.Product, record services.ProductListingRecord, updates map[string]any) {
+	for column, pair := range map[string][2]string{
+		"compressor_type": {product.CompressorType, record.CompressorType},
+		"refrigerant":     {product.Refrigerant, record.Refrigerant},
+		"voltage":         {product.Voltage, record.Voltage},
+		"pulley_grooves":  {product.PulleyGrooves, record.PulleyGrooves},
+		"pulley_diameter": {product.PulleyDiameter, record.PulleyDiameter},
+		"displacement":    {product.Displacement, record.Displacement},
+		"oil_type":        {product.OilType, record.OilType},
+		"oil_capacity":    {product.OilCapacity, record.OilCapacity},
+		"fitment_notes":   {product.FitmentNotes, record.FitmentNotes},
+	} {
+		if strings.TrimSpace(pair[0]) == "" && strings.TrimSpace(pair[1]) != "" {
+			updates[column] = pair[1]
+		}
+	}
+	if merged, changed := services.MergeListingReferences(product.OENumbers, record.OENumbers); changed {
+		updates["oe_numbers"] = listingJSONColumn(merged)
+	}
+	if merged, changed := services.MergeListingReferences(product.InterchangeNumbers, record.InterchangeNumbers); changed {
+		updates["interchange_numbers"] = listingJSONColumn(merged)
+	}
+	if len(product.Fitments) == 0 && len(record.Fitments) > 0 {
+		updates["fitments"] = listingJSONColumn(record.Fitments)
+	}
 }
 
 // automotivePartTypeFromCategoryName maps a root category name back to the
@@ -488,8 +628,14 @@ func listingChangeSummary(product models.Product, updates map[string]any, resolu
 		"name": "名称", "short_description": "简介", "description": "描述", "meta_title": "SEO标题", "meta_description": "SEO描述",
 		"meta_keywords": "SEO关键词", "brand": "品牌", "model": "型号", "part_number": "零件号", "sku": "SKU", "weight": "重量",
 		"warranty_period": "质保期", "lead_time": "交货期", "part_type": "配件类型", "vehicle_make": "适配车型",
+		"compressor_type": "压缩机系列", "refrigerant": "制冷剂", "voltage": "电压", "pulley_grooves": "皮带轮槽数",
+		"pulley_diameter": "皮带轮直径", "displacement": "排量", "oil_type": "冷冻油类型", "oil_capacity": "冷冻油容量",
+		"oe_numbers": "OE号", "interchange_numbers": "交叉参考号", "fitments": "适配车型清单", "fitment_notes": "适配说明",
 	}
-	order := []string{"name", "sku", "brand", "model", "part_number", "part_type", "vehicle_make", "weight", "warranty_period", "lead_time", "short_description", "description", "meta_title", "meta_description", "meta_keywords"}
+	order := []string{"name", "sku", "brand", "model", "part_number", "part_type", "vehicle_make", "weight", "warranty_period", "lead_time",
+		"short_description", "description", "meta_title", "meta_description", "meta_keywords",
+		"compressor_type", "refrigerant", "voltage", "pulley_grooves", "pulley_diameter", "displacement", "oil_type", "oil_capacity",
+		"oe_numbers", "interchange_numbers", "fitments", "fitment_notes"}
 	changed := make([]string, 0, len(order)+1)
 	for _, key := range order {
 		if _, ok := updates[key]; ok {
@@ -533,8 +679,6 @@ type aiListingGenerateRequest struct {
 	Brand           string `json:"brand"`
 	Model           string `json:"model"`
 	PartNumber      string `json:"part_number"`
-	PartType        string `json:"part_type"`
-	VehicleMake     string `json:"vehicle_make"`
 	Description     string `json:"description"`
 	MetaTitle       string `json:"meta_title"`
 	MetaDescription string `json:"meta_description"`
@@ -545,6 +689,8 @@ type aiListingGenerateRequest struct {
 	Instruction     string `json:"instruction"`
 	CreateCategory  *bool  `json:"create_category"`
 	UseWebSearch    *bool  `json:"use_web_search"`
+	// The form's current automotive values (part type, make, specs, OE, fitment).
+	models.AutomotiveFields
 }
 
 // GenerateListing researches a product (by its current form values) and
@@ -585,6 +731,25 @@ func (ac *AIAgentController) GenerateListing(c *gin.Context) {
 	overlay(&product.MetaKeywords, req.MetaKeywords)
 	overlay(&product.WarrantyPeriod, req.WarrantyPeriod)
 	overlay(&product.LeadTime, req.LeadTime)
+	for _, pair := range []struct {
+		target *string
+		value  string
+	}{
+		{&product.CompressorType, req.CompressorType}, {&product.Refrigerant, req.Refrigerant}, {&product.Voltage, req.Voltage},
+		{&product.PulleyGrooves, req.PulleyGrooves}, {&product.PulleyDiameter, req.PulleyDiameter}, {&product.Displacement, req.Displacement},
+		{&product.OilType, req.OilType}, {&product.OilCapacity, req.OilCapacity}, {&product.FitmentNotes, req.FitmentNotes},
+	} {
+		overlay(pair.target, pair.value)
+	}
+	if references := services.SanitizeListingReferences(req.OENumbers); len(references) > 0 {
+		product.OENumbers = references
+	}
+	if references := services.SanitizeListingReferences(req.InterchangeNumbers); len(references) > 0 {
+		product.InterchangeNumbers = references
+	}
+	if fitments := services.SanitizeListingFitments(req.Fitments, product.VehicleMake); len(fitments) > 0 {
+		product.Fitments = fitments
+	}
 	if req.CategoryID > 0 {
 		product.CategoryID = req.CategoryID
 	}
@@ -786,6 +951,18 @@ func compareListingFields(product models.Product, record services.ProductListing
 	compare("meta_title", product.MetaTitle, record.MetaTitle, false)
 	compare("meta_description", product.MetaDescription, record.MetaDescription, false)
 	compare("meta_keywords", product.MetaKeywords, record.MetaKeywords, false)
+	compare("compressor_type", product.CompressorType, record.CompressorType, false)
+	compare("refrigerant", product.Refrigerant, record.Refrigerant, false)
+	compare("voltage", product.Voltage, record.Voltage, false)
+	compare("pulley_grooves", product.PulleyGrooves, record.PulleyGrooves, false)
+	compare("pulley_diameter", product.PulleyDiameter, record.PulleyDiameter, false)
+	compare("displacement", product.Displacement, record.Displacement, false)
+	compare("oil_type", product.OilType, record.OilType, false)
+	compare("oil_capacity", product.OilCapacity, record.OilCapacity, false)
+	compare("oe_numbers", strings.Join(product.OENumbers, "\n"), strings.Join(record.OENumbers, "\n"), false)
+	compare("interchange_numbers", strings.Join(product.InterchangeNumbers, "\n"), strings.Join(record.InterchangeNumbers, "\n"), false)
+	compare("fitments", services.FormatListingFitments(product.Fitments), services.FormatListingFitments(record.Fitments), false)
+	compare("fitment_notes", product.FitmentNotes, record.FitmentNotes, false)
 	return fields
 }
 
@@ -1041,6 +1218,9 @@ var listingApplicableFields = map[string]bool{
 	"price": true, "stock_quantity": true,
 	"warranty_period": true, "lead_time": true, "weight": true, "short_description": true, "description": true,
 	"meta_title": true, "meta_description": true, "meta_keywords": true,
+	"compressor_type": true, "refrigerant": true, "voltage": true, "pulley_grooves": true, "pulley_diameter": true,
+	"displacement": true, "oil_type": true, "oil_capacity": true,
+	"oe_numbers": true, "interchange_numbers": true, "fitments": true, "fitment_notes": true,
 }
 
 // ApplyListingImport creates new products and updates the selected fields of
@@ -1165,6 +1345,18 @@ func (ac *AIAgentController) ApplyListingImport(c *gin.Context) {
 				if record.WeightKg != nil {
 					updates["weight"] = *record.WeightKg
 				}
+			case "oe_numbers":
+				if len(record.OENumbers) > 0 {
+					updates["oe_numbers"] = listingJSONColumn(record.OENumbers)
+				}
+			case "interchange_numbers":
+				if len(record.InterchangeNumbers) > 0 {
+					updates["interchange_numbers"] = listingJSONColumn(record.InterchangeNumbers)
+				}
+			case "fitments":
+				if len(record.Fitments) > 0 {
+					updates["fitments"] = listingJSONColumn(record.Fitments)
+				}
 			default:
 				if value := listingRecordText(record, key); value != "" {
 					updates[key] = value
@@ -1245,20 +1437,34 @@ func listingRecordText(record services.ProductListingRecord, key string) string 
 		return record.MetaDescription
 	case "meta_keywords":
 		return record.MetaKeywords
+	case "compressor_type":
+		return record.CompressorType
+	case "refrigerant":
+		return record.Refrigerant
+	case "voltage":
+		return record.Voltage
+	case "pulley_grooves":
+		return record.PulleyGrooves
+	case "pulley_diameter":
+		return record.PulleyDiameter
+	case "displacement":
+		return record.Displacement
+	case "oil_type":
+		return record.OilType
+	case "oil_capacity":
+		return record.OilCapacity
+	case "fitment_notes":
+		return record.FitmentNotes
 	}
 	return ""
 }
 
 // listingAutomotiveFields builds the automotive column set of an imported
-// record. It returns nil when the record states neither field, so an untouched
+// record. It returns nil when the record states none of it, so an untouched
 // product keeps its stored fitment.
 func listingAutomotiveFields(record services.ProductListingRecord) *models.AutomotiveFields {
 	partType := automotivePartTypeFromCategoryName(services.AutomotivePartTypeCategoryName(record.PartType))
-	vehicleMake := strings.TrimSpace(record.VehicleMake)
-	if partType == "" && vehicleMake == "" {
-		return nil
-	}
-	return &models.AutomotiveFields{PartType: partType, VehicleMake: vehicleMake}
+	return services.ListingAutomotiveFields(record, partType)
 }
 
 func publishListingChanges(productIDs []uint, skus []string, reason string) {

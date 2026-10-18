@@ -1,6 +1,7 @@
 import { apiClient } from '@/lib/api';
 import type { APIResponse } from '@/types';
 import type { AIAgentSEOJob } from './ai-agent.service';
+import type { VehicleFitment } from '@/types/automotive';
 
 export interface ProductListingRecord {
   name: string;
@@ -23,6 +24,18 @@ export interface ProductListingRecord {
   meta_title: string;
   meta_description: string;
   meta_keywords: string;
+  compressor_type?: string;
+  refrigerant?: string;
+  voltage?: string;
+  pulley_grooves?: string;
+  pulley_diameter?: string;
+  displacement?: string;
+  oil_type?: string;
+  oil_capacity?: string;
+  oe_numbers?: string[];
+  interchange_numbers?: string[];
+  fitments?: VehicleFitment[];
+  fitment_notes?: string;
 }
 
 export interface CategoryPathResolution {
@@ -54,6 +67,18 @@ export interface AIListingGenerateRequest {
   warranty_period?: string;
   lead_time?: string;
   category_id?: number;
+  compressor_type?: string;
+  refrigerant?: string;
+  voltage?: string;
+  pulley_grooves?: string;
+  pulley_diameter?: string;
+  displacement?: string;
+  oil_type?: string;
+  oil_capacity?: string;
+  oe_numbers?: string[];
+  interchange_numbers?: string[];
+  fitments?: VehicleFitment[];
+  fitment_notes?: string;
   instruction?: string;
   create_category?: boolean;
   use_web_search?: boolean;
@@ -71,7 +96,9 @@ export interface AIListingGenerateResult {
 export type ListingImportFieldKey =
   | 'name' | 'brand' | 'model' | 'part_number' | 'part_type' | 'vehicle_make'
   | 'price' | 'stock_quantity' | 'warranty_period'
-  | 'lead_time' | 'weight' | 'short_description' | 'description' | 'meta_title' | 'meta_description' | 'meta_keywords';
+  | 'lead_time' | 'weight' | 'short_description' | 'description' | 'meta_title' | 'meta_description' | 'meta_keywords'
+  | 'compressor_type' | 'refrigerant' | 'voltage' | 'pulley_grooves' | 'pulley_diameter' | 'displacement'
+  | 'oil_type' | 'oil_capacity' | 'oe_numbers' | 'interchange_numbers' | 'fitments' | 'fitment_notes';
 
 export interface ListingImportField {
   key: ListingImportFieldKey;
