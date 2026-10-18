@@ -332,6 +332,8 @@ func applyAIAgentProfileMutation(profile *models.AIAgentProfile, req aiAgentProf
 		if apiKey != "" {
 			encrypted, err := utils.EncryptSecret(apiKey)
 			if err != nil {
+				// %w keeps utils.ErrEncryptionKey* reachable so the handler can
+				// report the environment problem instead of "Invalid AI profile".
 				return fmt.Errorf("could not encrypt AI API key: %w", err)
 			}
 			profile.APIKeyEnc = encrypted
@@ -387,6 +389,9 @@ func (ac *AIAgentController) CreateProfile(c *gin.Context) {
 	}
 	profile := models.AIAgentProfile{}
 	if err := applyAIAgentProfileMutation(&profile, req, true); err != nil {
+		if respondSecretEncryptionFailure(c, "AI API Key", err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Message: "Invalid AI profile", Error: err.Error()})
 		return
 	}
@@ -510,6 +515,9 @@ func (ac *AIAgentController) UpdateProfile(c *gin.Context) {
 		return
 	}
 	if requestErr != nil {
+		if respondSecretEncryptionFailure(c, "AI API Key", requestErr) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, models.APIResponse{Success: false, Message: "Invalid AI profile", Error: requestErr.Error()})
 		return
 	}
