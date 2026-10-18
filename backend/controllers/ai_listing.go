@@ -342,6 +342,16 @@ func listingContentProblem(product models.Product, record services.ProductListin
 	if _, detail := services.EvaluateProductContentQuality(candidate); detail != "" {
 		return detail
 	}
+	if services.AutomotiveMode() {
+		candidate.MetaTitle = record.MetaTitle
+		candidate.MetaKeywords = record.MetaKeywords
+		if candidate.SKU == "" {
+			candidate.SKU = record.SKU
+		}
+		if issues := services.EvaluateListingFormat(candidate); len(issues) > 0 {
+			return services.ListingQualitySummary(issues)
+		}
+	}
 	return ""
 }
 

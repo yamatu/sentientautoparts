@@ -365,10 +365,9 @@ func processListingItem(ctx context.Context, setting *models.AIAgentSetting, api
 		finishListingItem(db, jobID, workerToken, item, "failed", err.Error())
 		return
 	}
-	if product.DisableAutoSEO && !opts.Force {
-		finishListingItem(db, jobID, workerToken, item, "skipped", "该产品已关闭自动 SEO 覆盖，已跳过（勾选“强制重写”可处理）")
-		return
-	}
+	// DisableAutoSEO only protects copy from the rule-based rewrite on ordinary
+	// saves; every imported product has it set, so this explicitly started job
+	// relies on the quality gate instead.
 	issues := services.EvaluateListingQuality(product)
 	if len(issues) == 0 && !opts.Force {
 		if strings.TrimSpace(product.AISEOStatus) == "" {

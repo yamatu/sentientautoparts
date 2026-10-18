@@ -137,7 +137,7 @@ export default function AIListingJobModal({ open, locale, isAdmin, selectedIds, 
             {mode === 'full' && (
               <label className="flex items-start gap-2">
                 <input type="checkbox" checked={skipGood} onChange={(event) => setSkipGood(event.target.checked)} className="mt-0.5 rounded border-gray-300 text-violet-600" />
-                <span>{zh ? '跳过资料完整且 SEO 合格的产品（取消勾选 = 强制全部重写，也会处理已关闭自动 SEO 的产品）' : 'Skip listings that already pass the check (uncheck to force a rewrite)'}</span>
+                <span>{zh ? '跳过已符合固定格式且资料完整的产品（取消勾选 = 强制全部重写）' : 'Skip listings that already pass the check (uncheck to force a rewrite)'}</span>
               </label>
             )}
             <label className="flex items-start gap-2">

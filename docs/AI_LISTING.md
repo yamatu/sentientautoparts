@@ -88,9 +88,16 @@ placeholder survives or industrial brands reappear.
 `services.EvaluateListingQuality` decides whether a product needs work before any
 AI call, and `listingContentProblem` re-checks the model's answer. The contract:
 the description must name the exact part number/model, be long enough, contain no
-foreign brand mention and no invented specification. In automotive mode a product
-also fails the gate when it has no OE numbers, no fitment (rows or notes), or —
-for compressors — none of series / refrigerant / voltage / pulley grooves. A failed answer is retried
+foreign brand mention and no invented specification. In automotive mode the gate
+also checks the fixed format (`services.EvaluateListingFormat`: description has the
+`Key Features` block; name, short description and meta title contain the SKU; at
+least 6 meta keywords) and data gaps (no OE numbers; no fitment, or fitment rows
+without any year/engine; compressors with fewer than 3 of series / refrigerant /
+voltage / pulley grooves / pulley diameter). Legacy imports have SEO of a fine
+length, so length checks alone used to pass them. The format rules are also
+enforced on AI answers; data gaps are not, since research may not find them.
+`DisableAutoSEO` does not skip a product in this explicitly started job — every
+legacy import carries it, so the gate decides instead. A failed answer is retried
 once with the failure reason as feedback.
 
 ## Import
