@@ -126,6 +126,16 @@ services:
       SITE_URL: ${SITE_URL:-http://localhost:8090}
       REVALIDATE_SECRET: ${REVALIDATE_SECRET:?Set REVALIDATE_SECRET in .env}
       ENABLE_PUBLIC_LOCALE_REDIRECT: "false"
+      # ISR pages + fetch data cache are kept in a bounded in-memory LRU
+      # (frontend/cache-handler.js), never written to the container disk.
+      NEXT_CACHE_MAX_MB: ${NEXT_CACHE_MAX_MB:-256}
+      # Without a heap ceiling V8 grows lazily until the kernel OOM-kills it.
+      NODE_OPTIONS: ${FRONTEND_NODE_OPTIONS:---max-old-space-size=768}
+    # Heap (768m) + cached page buffers (256m, off-heap) + runtime overhead.
+    mem_limit: ${FRONTEND_MEM_LIMIT:-1536m}
+    # A crashing Node process must not leave multi-GB core files in the container.
+    ulimits:
+      core: 0
     depends_on:
       backend: { condition: service_healthy }
       init-catalog: { condition: service_completed_successfully }

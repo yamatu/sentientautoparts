@@ -4,7 +4,11 @@ import { storefront, type Page as SitePage } from '@/services/storefront.server'
 import { redirectLegacyPath } from '@/lib/legacy-route.server';
 import { pageMetadata } from '@/lib/storefront-seo';
 import { notFound } from 'next/navigation';
-export const dynamic = 'force-dynamic';
+// ISR: rendered on first request, then served from the page cache and
+// regenerated in the background (backend saves purge it on demand).
+export const revalidate = 300;
+// No build-time prerendering (the build has no backend); see [locale]/layout.
+export function generateStaticParams() { return []; }
 type Props = { params: Promise<{ articlePath: string[] }> };
 async function resolve(parts: string[]) {
  const path = '/' + parts.join('/');

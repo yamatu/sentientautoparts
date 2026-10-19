@@ -34,6 +34,8 @@ func (s *StorefrontSettingController) Update(c *gin.Context) {
 	}
 	services.InvalidatePublicCaches(c.Request.Context(), "storefront-settings:update", []string{"/", "/about", "/contact_us", "/download"})
 	services.TriggerNextRevalidate(nil, []string{"/", "/about", "/contact_us", "/download"}, false)
+	// Header/footer settings are rendered on every ISR-cached storefront page.
+	services.TriggerNextRevalidateTags([]string{"storefront-settings"})
 	storeOK(c, setting)
 }
 func (s *StorefrontController) Settings(c *gin.Context) {

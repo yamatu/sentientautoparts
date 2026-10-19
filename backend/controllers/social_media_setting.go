@@ -70,6 +70,8 @@ func (c *SocialMediaSettingController) Update(ctx *gin.Context) {
 
 	services.InvalidatePublicCaches(ctx.Request.Context(), "social-media:update", []string{"/"})
 	services.TriggerNextRevalidate(nil, []string{"/"}, false)
+	// The storefront settings payload (header/footer social links) carries this tag.
+	services.TriggerNextRevalidateTags([]string{"social-links"})
 
 	ctx.JSON(http.StatusOK, models.APIResponse{
 		Success: true,

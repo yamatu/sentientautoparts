@@ -5,6 +5,9 @@ import { pageMetadata, plainText } from '@/lib/storefront-seo';
 import Link from 'next/link';
 import { ArrowUpRight } from 'lucide-react';
 
+// Reads searchParams (filters/pagination), so it stays request-rendered. Under
+// the static [locale] layout, dropping this makes the page 500 at runtime with
+// DYNAMIC_SERVER_USAGE. Its backend reads still use the Data Cache.
 export const dynamic = 'force-dynamic';
 export function generateMetadata() { return pageMetadata('/news', 'News & Insights'); }
 

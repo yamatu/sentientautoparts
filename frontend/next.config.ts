@@ -1,8 +1,29 @@
 import path from 'node:path';
 import type { NextConfig } from "next";
+import { PUBLIC_LOCALES } from './src/lib/i18n/config';
+
+// First path segments that are not English public pages: explicit locale
+// prefixes plus admin, API, proxied media and the paged product sitemaps.
+const NON_DEFAULT_LOCALE_SEGMENTS = [
+  ...PUBLIC_LOCALES.map((locale) => locale.code),
+  'admin',
+  'api',
+  '_next',
+  'uploads',
+  'media-thumb',
+  'images',
+  'sitemap-products',
+].join('|');
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+
+  // ISR pages and the fetch Data Cache live in a bounded in-memory LRU instead
+  // of being written to .next/ on disk forever (see cache-handler.js). Size via
+  // NEXT_CACHE_MAX_MB. Next's own memory cache is disabled so entries are not
+  // held twice.
+  cacheHandler: path.join(__dirname, 'cache-handler.js'),
+  cacheMaxMemorySize: 0,
   compress: true,
   generateEtags: true,
   poweredByHeader: false,
@@ -54,6 +75,17 @@ const nextConfig: NextConfig = {
         {
           source: '/api/:path*',
           destination: `${apiBase}/api/:path*`,
+        },
+        // Unprefixed public URLs are the English pages under app/[locale].
+        // afterFiles runs after static routes and public/ files (favicons,
+        // /legacy assets) have been matched, so /robots.txt, /sitemap.xml etc.
+        // are untouched. This must be a config rewrite: Next only serves ISR
+        // for rewrites it can replay itself; middleware rewrites always render
+        // dynamically.
+        { source: '/', destination: '/en' },
+        {
+          source: `/:first((?!(?:${NON_DEFAULT_LOCALE_SEGMENTS})(?:/|$))[^/]+)/:rest*`,
+          destination: '/en/:first/:rest*',
         },
       ],
     };

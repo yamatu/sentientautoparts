@@ -6,7 +6,9 @@ import PublicButton from '@/components/storefront/PublicButton';
 import CompanyContact from '@/components/storefront/CompanyContact';
 import { getB2BHome, getStorefrontSettings } from '@/services/storefront.server';
 import { pageMetadata } from '@/lib/storefront-seo';
-export const dynamic='force-dynamic';
+// ISR: rendered on first request, then served from the page cache and
+// regenerated in the background (backend saves purge it on demand).
+export const revalidate = 300;
 const DEFAULT_ABOUT_IMAGE='/legacy/theme/images/pro1.png';
 // Same policy as RichText, plus the layout classes the about template is built from.
 function aboutHtml(content:string){return sanitizeHtml(content,{allowedTags:[...sanitizeHtml.defaults.allowedTags,'img'],allowedAttributes:{a:['href','title','rel','class'],div:['class'],img:['src','alt','width','height','loading']},allowedClasses:{div:['about_item','flex_start','item','name','txt','bigname','bigtxt','send_box','you_list','you_item','info','h4','desc'],a:['send_btn']},allowedSchemes:['http','https','mailto','tel'],allowProtocolRelative:false,transformTags:{img:sanitizeHtml.simpleTransform('img',{loading:'lazy'}),a:sanitizeHtml.simpleTransform('a',{rel:'noopener noreferrer'})}});}

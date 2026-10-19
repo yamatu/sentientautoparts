@@ -20,6 +20,13 @@ export const getStorefrontSettings = cache(async (): Promise<PublicSiteConfig> =
  if(!data) throw new StorefrontUnavailable('Site settings are unavailable.');
  return data;
 });
+// Header, footer and catalogue sidebar need it on every page: a missing
+// navigation must never be rendered (and cached) as an empty catalogue.
+export const getNavigation = cache(async (): Promise<Navigation> => {
+ const data=await storefront<Navigation>('navigation');
+ if(!data) throw new StorefrontUnavailable('Catalogue navigation is unavailable.');
+ return data;
+});
 export const getB2BHome = cache(async (): Promise<B2BHome> => {
  const data=await storefront<B2BHome>('b2b-home');
  if(!data) throw new StorefrontUnavailable('Homepage settings are unavailable.');
@@ -28,10 +35,33 @@ export const getB2BHome = cache(async (): Promise<B2BHome> => {
 export interface CatalogFilters { q?: string; make?: string; part_type?: string; year?: string; page?: number; }
 
 export class StorefrontUnavailable extends Error {}
+
+// Storefront reads go through Next's Data Cache so public pages can be served
+// from the ISR cache. The backend purges these tags on save (see
+// backend/services/revalidate.go). A cached page also records the tags of the
+// fetches it rendered, so revalidating a tag refreshes every page using it.
+export const STOREFRONT_REVALIDATE_SECONDS = 300;
+export function storefrontCacheTags(path: string): string[] {
+  const tags = ['public-api', 'storefront'];
+  switch (path.split(/[/?]/)[0]) {
+    case 'settings': tags.push('storefront-settings', 'social-links'); break;
+    case 'home': case 'b2b-home': tags.push('homepage-content', 'all-products', 'news'); break;
+    case 'navigation': tags.push('all-products', 'categories', 'site-pages'); break;
+    case 'products': tags.push('all-products'); break;
+    case 'articles': tags.push('news'); break;
+    case 'pages': tags.push('site-pages'); break;
+    case 'resolve': tags.push('legacy-routes'); break;
+  }
+  return tags;
+}
+
+// Only a real 404 resolves to null (callers turn that into notFound()). Network
+// errors, timeouts and 5xx throw, so ISR keeps serving the last good page and
+// never caches an outage as "not found" or as empty/default content.
 export const storefront = cache(async <T>(path: string): Promise<T | null> => {
   const base = (process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8080').replace(/\/+$/, '');
   let response: Response;
-  try { response = await fetch(`${base}/api/v1/public/storefront/${path}`, { cache: 'no-store', signal: AbortSignal.timeout(15000) }); }
+  try { response = await fetch(`${base}/api/v1/public/storefront/${path}`, { next: { revalidate: STOREFRONT_REVALIDATE_SECONDS, tags: storefrontCacheTags(path) }, signal: AbortSignal.timeout(15000) }); }
   catch { throw new StorefrontUnavailable('The catalogue service is temporarily unavailable.'); }
   if (response.status === 404) return null;
   if (!response.ok) throw new StorefrontUnavailable(`Catalogue request failed (${response.status}).`);

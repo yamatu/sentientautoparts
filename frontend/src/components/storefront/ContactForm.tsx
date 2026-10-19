@@ -1,12 +1,12 @@
 'use client';
 import { useState } from 'react';
-import { usePathname } from 'next/navigation';
 import type { StorefrontSettings } from '@/types/storefront';
 
 export default function ContactForm({ product = '', type='product', config }: { product?: string; type?:'product'|'distributor'; config:StorefrontSettings }) {
-  const sourcePage=usePathname();
   const [status, setStatus] = useState('');
   const [pending, setPending] = useState(false);
+  // source_page is read from the browser URL at submit time: on ISR pages
+  // usePathname() can report the internal /en/... rewrite target.
   return <div className="sap-contact-form" id="inquiry">
     <div className="sap-form-heading"><h2>{config.inquiry_heading||'Inquire today'}</h2><p>{config.inquiry_intro}</p></div>
     <form onSubmit={async event => {
@@ -15,7 +15,7 @@ export default function ContactForm({ product = '', type='product', config }: { 
       if (data.get('website')) return;
       setPending(true); setStatus('');
       try {
-        const response = await fetch('/api/v1/public/contact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: data.get('name'), email: data.get('email'), phone: data.get('phone'), company: data.get('company'), subject: product ? `Product inquiry: ${product}`.slice(0, 200) : 'Automotive parts inquiry', message: data.get('message'), country:data.get('country'), product_reference:data.get('product'), vehicle_details:data.get('vehicle'), quantity:data.get('quantity'), source_page:sourcePage, website:data.get('website'), inquiry_type: type }) });
+        const response = await fetch('/api/v1/public/contact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: data.get('name'), email: data.get('email'), phone: data.get('phone'), company: data.get('company'), subject: product ? `Product inquiry: ${product}`.slice(0, 200) : 'Automotive parts inquiry', message: data.get('message'), country:data.get('country'), product_reference:data.get('product'), vehicle_details:data.get('vehicle'), quantity:data.get('quantity'), source_page:window.location.pathname, website:data.get('website'), inquiry_type: type }) });
         if (!response.ok) throw new Error(response.status === 429 ? 'Too many inquiries. Please try again later.' : 'Unable to send. Please try again.');
         setStatus(config.inquiry_success||'Thank you. Your inquiry has been received.'); form.reset();
       } catch (e) { setStatus(e instanceof Error ? e.message : 'Unable to send.'); }

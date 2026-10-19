@@ -7,17 +7,20 @@ import RichText from '@/components/storefront/RichText';
 import PublicButton from '@/components/storefront/PublicButton';
 import BannerCarousel from '@/components/storefront/BannerCarousel';
 import { configuredSocialLinks } from '@/components/storefront/SocialLinks';
-import { storefront, getStorefrontSettings, getB2BHome, type ProductList, type Navigation, type HomeBlock } from '@/services/storefront.server';
+import { storefront, getStorefrontSettings, getB2BHome, getNavigation, StorefrontUnavailable, type ProductList, type HomeBlock } from '@/services/storefront.server';
 import { pageMetadata, jsonLD } from '@/lib/storefront-seo';
 import { getSiteUrl } from '@/lib/url';
 import { publicLink } from '@/lib/public-links';
-import { redirect } from 'next/navigation';
-export const dynamic='force-dynamic';
-export async function generateMetadata(){const {site}=await getStorefrontSettings();return pageMetadata('/',site.home_meta_title||site.brand_name,site.home_meta_description,site.home_meta_keywords,site.logo_url||undefined);}
-export default async function Home({searchParams}:{searchParams:Promise<Record<string,string|string[]|undefined>>}){
- const query=await searchParams;if(query.m==='Search'&&typeof query.keyword==='string')redirect(`/products?q=${encodeURIComponent(query.keyword)}`);
- const [home,config,count,nav]=await Promise.all([getB2BHome(),getStorefrontSettings(),storefront<ProductList>('products?page_size=1'),storefront<Navigation>('navigation')]);
- const {site,social}=config;const roots=nav?.categories.filter(c=>!c.parent_id)||[];const advantages=home.sections.filter(b=>b.section_key.startsWith('advantage_')&&b.is_active);
+export async function homeMetadata(){const {site}=await getStorefrontSettings();return pageMetadata('/',site.home_meta_title||site.brand_name,site.home_meta_description,site.home_meta_keywords,site.logo_url||undefined);}
+// Rendered by the ISR homepage (app/[locale]/page.tsx) and the uncached admin
+// preview (app/[locale]/homepage-preview). Every fetch below throws on backend
+// 5xx/timeouts (and on a missing catalogue summary), so a failed regeneration
+// keeps serving the last good page instead of caching an empty homepage.
+// The legacy `/?m=Search&keyword=` redirect now lives in middleware.
+export default async function HomePage(){
+ const [home,config,count,nav]=await Promise.all([getB2BHome(),getStorefrontSettings(),storefront<ProductList>('products?page_size=1'),getNavigation()]);
+ if(!count)throw new StorefrontUnavailable('Catalogue summary is unavailable.');
+ const {site,social}=config;const roots=nav.categories.filter(c=>!c.parent_id);const advantages=home.sections.filter(b=>b.section_key.startsWith('advantage_')&&b.is_active);
  const heading=(b:HomeBlock)=><div className="sap-section-heading"><div>{b.subtitle&&<p className="sap-eyebrow">{b.subtitle}</p>}{b.title&&<h2>{b.title}</h2>}{b.description&&<RichText content={b.description}/>}</div><PublicButton href={b.button_url} text={b.button_text} settings={site} className="sap-text-link"/></div>;
  const render=(b:HomeBlock)=>{
   if(!b.is_active||b.section_key==='about_content'||b.section_key.startsWith('advantage_'))return null;

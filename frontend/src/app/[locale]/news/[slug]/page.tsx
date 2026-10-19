@@ -9,7 +9,11 @@ import { redirectLegacyPath } from '@/lib/legacy-route.server';
 import Link from 'next/link';
 import { ArrowLeft, Calendar } from 'lucide-react';
 
-export const dynamic = 'force-dynamic';
+// ISR: rendered on first request, then served from the page cache and
+// regenerated in the background (backend saves purge it on demand).
+export const revalidate = 300;
+// No build-time prerendering (the build has no backend); see [locale]/layout.
+export function generateStaticParams() { return []; }
 type Props = { params: Promise<{ slug: string }> };
 
 async function load(slug: string) {

@@ -9,7 +9,11 @@ import { pageMetadata, plainText, jsonLD } from '@/lib/storefront-seo';
 import { getSiteUrl } from '@/lib/url';
 import { notFound, permanentRedirect } from 'next/navigation';
 import { redirectLegacyPath } from '@/lib/legacy-route.server';
-export const dynamic = 'force-dynamic';
+// ISR: rendered on first request, then served from the page cache and
+// regenerated in the background (backend saves purge it on demand).
+export const revalidate = 300;
+// No build-time prerendering (the build has no backend); see [locale]/layout.
+export function generateStaticParams() { return []; }
 type Props={params:Promise<{slug:string}>};
 async function load(slug:string){const p=await storefront<Product>(`products/${encodeURIComponent(slug)}`);if(!p){await redirectLegacyPath('/products/'+slug);notFound();}return p;}
 export async function generateMetadata({params}:Props){const p=await load((await params).slug);return pageMetadata(productPath(p),p.meta_title||p.name,p.meta_description||p.short_description,p.meta_keywords,imageURLs(p)[0]);}

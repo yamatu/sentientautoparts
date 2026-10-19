@@ -1,13 +1,13 @@
 import Shell from './Shell';
 import Link from 'next/link';
 import ProductGrid from './ProductGrid';
-import { storefront, type ProductList, type Navigation, type CatalogFilters } from '@/services/storefront.server';
+import { storefront, getNavigation, type ProductList, type CatalogFilters } from '@/services/storefront.server';
 import { notFound } from 'next/navigation';
 
 export default async function Catalog({ category, q = '', make = '', part_type = '', year = '', page = 1 }: CatalogFilters & { category?: string }) {
   if (!Number.isInteger(page) || page > 1000000 || (year && !/^(19|20)\d{2}$/.test(year)) || q.length > 200) notFound();
   const params = new URLSearchParams({ page: String(page), q, make, part_type, year }); if (category) params.set('category', category);
-  const [data, nav] = await Promise.all([storefront<ProductList>(`products?${params}`), storefront<Navigation>('navigation')]);
+  const [data, nav] = await Promise.all([storefront<ProductList>(`products?${params}`), getNavigation()]);
   if (!data || (page > 1 && page > data.total_pages)) notFound();
   const path = category ? `/categories/${category}` : '/products';
   const pageURL=(n:number)=>`${path}?${new URLSearchParams({q,make,part_type,year,page:String(n)})}`;

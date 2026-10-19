@@ -1,5 +1,8 @@
 import Catalog from '@/components/storefront/Catalog';
 import { pageMetadata } from '@/lib/storefront-seo';
+// Reads searchParams (filters/pagination), so it stays request-rendered. Under
+// the static [locale] layout, dropping this makes the page 500 at runtime with
+// DYNAMIC_SERVER_USAGE. Its backend reads still use the Data Cache.
 export const dynamic = 'force-dynamic';
 type Props = { searchParams: Promise<{ q?: string; page?: string; make?: string; part_type?: string; year?: string }> };
 export async function generateMetadata({ searchParams }: Props) { const filters=await searchParams; return { ...await pageMetadata('/products','Automotive A/C Parts','Search automotive A/C compressors, OE references and vehicle applications.'), ...(Object.values(filters).some(Boolean)?{robots:{index:false,follow:true}}:{}) }; }

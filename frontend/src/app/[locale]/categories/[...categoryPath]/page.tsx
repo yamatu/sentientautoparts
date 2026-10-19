@@ -3,6 +3,9 @@ import { storefront, type ProductList } from '@/services/storefront.server';
 import { pageMetadata } from '@/lib/storefront-seo';
 import { notFound } from 'next/navigation';
 import { redirectLegacyPath } from '@/lib/legacy-route.server';
+// Reads searchParams (filters/pagination), so it stays request-rendered. Under
+// the static [locale] layout, dropping this makes the page 500 at runtime with
+// DYNAMIC_SERVER_USAGE. Its backend reads still use the Data Cache.
 export const dynamic = 'force-dynamic';
 type Props = { params: Promise<{ categoryPath: string[] }>; searchParams: Promise<{ page?: string; q?: string; make?: string; year?: string; part_type?: string }> };
 export async function generateMetadata({ params, searchParams }: Props) {

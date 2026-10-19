@@ -55,5 +55,6 @@ func b2bUpdateSocialConfig(c *gin.Context, req updateSocialLinksRequest) {
 		return
 	}
 	services.InvalidatePublicCaches(c.Request.Context(), "social-links:compat-update", []string{"/"})
+	services.TriggerNextRevalidateTags([]string{"social-links", "storefront-settings"})
 	b2bSocialConfig(c)
 }

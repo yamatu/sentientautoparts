@@ -148,15 +148,31 @@ function hasClientAdminSession(request: NextRequest): boolean {
   return request.cookies.get('auth_session')?.value === '1';
 }
 
+const INTERNAL_PREVIEW_REWRITE_HEADER = 'x-storefront-preview-rewrite';
+const HOMEPAGE_PREVIEW_PATH = '/homepage-preview';
+
+// Unprefixed public URLs are mapped to app/[locale] with locale "en" by the
+// rewrites in next.config.ts, not here: Next only treats a request as ISR when
+// the rewrite is a config rewrite (middleware rewrites always render dynamically).
 export async function middleware(request: NextRequest) {
   const rawPathname = request.nextUrl.pathname;
   if (rawPathname.startsWith('/legacy/') || rawPathname.startsWith('/uploads/') || rawPathname.startsWith('/images/')) return NextResponse.next();
+  // Defensive: never re-process the preview URL this middleware rewrote.
+  if (request.headers.get(INTERNAL_PREVIEW_REWRITE_HEADER) === '1' && rawPathname.endsWith(HOMEPAGE_PREVIEW_PATH)) {
+    return NextResponse.next();
+  }
   // YourPHP query-style links and the former admin entry are explicitly
   // translated; authentication is still enforced by the backend.
   if (rawPathname === '/admin.php') return NextResponse.redirect(new URL('/admin', request.url), 301);
   if (rawPathname === '/index.php' && request.nextUrl.searchParams.get('m') === 'Search') {
     const u = new URL('/products', request.url); u.searchParams.set('q', request.nextUrl.searchParams.get('keyword') || '');
     return NextResponse.redirect(u, 301);
+  }
+  // Same legacy search on the homepage URL. This used to be handled inside the
+  // homepage render, which made the homepage read searchParams (no ISR).
+  if (rawPathname === '/' && request.nextUrl.searchParams.get('m') === 'Search' && request.nextUrl.searchParams.has('keyword')) {
+    const u = new URL('/products', request.url); u.searchParams.set('q', request.nextUrl.searchParams.get('keyword') || '');
+    return NextResponse.redirect(u, 307);
   }
   if (rawPathname === '/en' || rawPathname.startsWith('/en/')) {
     const url = request.nextUrl.clone();
@@ -171,9 +187,14 @@ export async function middleware(request: NextRequest) {
     url.pathname = pathname;
     return NextResponse.redirect(url, 308);
   }
-  const forwardedSiteLocale = request.headers.get('x-site-locale');
-  const locale = pathLocale
-    || (isPublicLocale(forwardedSiteLocale) ? normalizePublicLocale(forwardedSiteLocale) : DEFAULT_PUBLIC_LOCALE);
+  const locale = pathLocale || DEFAULT_PUBLIC_LOCALE;
+
+  // The preview route is uncached; only reachable via `/?admin_preview=1`.
+  if (pathname === HOMEPAGE_PREVIEW_PATH || pathname.startsWith(`${HOMEPAGE_PREVIEW_PATH}/`)) {
+    const url = request.nextUrl.clone();
+    url.pathname = localizePublicPath('/', locale);
+    return NextResponse.redirect(url, 307);
+  }
   // The admin session JWT lives in an HttpOnly cookie. Next middleware runs on
   // the server and can still read it, so route protection keeps working even
   // though client-side JavaScript can no longer see the token.
@@ -208,15 +229,9 @@ export async function middleware(request: NextRequest) {
   );
   const preferredLocale = savedLocale || detectedLocale;
   const automaticLocale = preferredLocale;
-  // A localized URL is internally rewritten to its unprefixed route. Next may
-  // run middleware again for that rewritten request, so only auto-detect on an
-  // actual unprefixed browser URL. Otherwise /zh -> rewrite / -> redirect /zh
-  // becomes an infinite loop.
-  const isLocalizedInternalRewrite = Boolean(forwardedSiteLocale);
   if (
     process.env.ENABLE_PUBLIC_LOCALE_REDIRECT === 'true'
     && !pathLocale
-    && !isLocalizedInternalRewrite
     && isAutomaticLocaleRedirectAllowed(pathname)
     && automaticLocale !== DEFAULT_PUBLIC_LOCALE
     && isLocalizablePublicPath(pathname)
@@ -363,21 +378,20 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/admin', request.url));
   }
 
-  // Create response with SEO optimizations
-  const requestHeaders = new Headers(request.headers);
-  requestHeaders.set('x-site-locale', locale);
-  requestHeaders.set('x-site-pathname', pathname);
-
-  const response = pathLocale
-    ? NextResponse.rewrite(
-        (() => {
-          const url = request.nextUrl.clone();
-          url.pathname = pathname;
-          return url;
-        })(),
-        { request: { headers: requestHeaders } },
-      )
-    : NextResponse.next({ request: { headers: requestHeaders } });
+  // Locale-prefixed URLs match app/[locale] directly and unprefixed ones are
+  // mapped by next.config rewrites, so public pages pass through untouched.
+  // Only the admin homepage preview is rewritten, to its uncached route.
+  const isHomepagePreview = pathname === '/' && request.nextUrl.searchParams.get('admin_preview') === '1';
+  let response: NextResponse;
+  if (isHomepagePreview) {
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set(INTERNAL_PREVIEW_REWRITE_HEADER, '1');
+    const url = request.nextUrl.clone();
+    url.pathname = `/${locale}${HOMEPAGE_PREVIEW_PATH}`;
+    response = NextResponse.rewrite(url, { request: { headers: requestHeaders } });
+  } else {
+    response = NextResponse.next();
+  }
 
   // The broken half-session reached the login page: clear the stale HttpOnly
   // cookie on this response so the next login starts from a clean slate.
@@ -421,7 +435,7 @@ export async function middleware(request: NextRequest) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
   }
 
-  if (request.nextUrl.searchParams.get('admin_preview') === '1') {
+  if (isHomepagePreview || request.nextUrl.searchParams.get('admin_preview') === '1') {
     response.headers.set('Cache-Control', 'private, no-store, max-age=0');
     response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
   }
