@@ -9,7 +9,7 @@ export interface Category { id: number; name: string; slug: string; description:
 export interface Page { id: number; page_key: string; title: string; summary: string; content: string; meta_title: string; meta_description: string; meta_keywords: string; updated_at: string; }
 export interface Article extends Omit<Page, 'page_key'> { slug: string; featured_image: string; }
 export interface Product extends Partial<AutomotiveFields> { id: number; sku: string; name: string; model: string; part_number: string; brand: string; description: string; short_description: string; price: number; category: Category; meta_title: string; meta_description: string; meta_keywords: string; image_urls: string | string[]; images: { url: string; alt_text: string }[]; attributes: { attribute_name: string; attribute_value: string }[]; updated_at: string; }
-export interface ProductList { products: Product[]; category: Category | null; page: number; total: number; total_pages: number; }
+export interface ProductList { products: Product[]; category: Category | null; page: number; page_size?: number; total: number; total_pages: number; }
 export interface Navigation { categories: Category[]; pages: Page[]; makes: string[]; part_types: string[]; }
 export interface HomeBlock { id?: number; section_key: string; title: string; subtitle: string; description: string; image_url: string; button_url: string; button_text: string; data?: Record<string, unknown> | null; sort_order: number; is_active: boolean; }
 export interface HomeData { banners: { id: number; title: string; image_url: string; link_url: string; description: string }[]; blocks: HomeBlock[]; }
