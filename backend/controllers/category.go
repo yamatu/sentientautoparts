@@ -452,8 +452,9 @@ func (cc *CategoryController) CreateCategory(c *gin.Context) {
 		Name:        req.Name,
 		Slug:        slug,
 		Description: req.Description,
-		ImageURL:    req.ImageURL,
-		ParentID:    req.ParentID,
+		ImageURL:     req.ImageURL,
+		MenuImageURL: req.MenuImageURL,
+		ParentID:     req.ParentID,
 		SortOrder:   req.SortOrder,
 		IsActive:    req.IsActive,
 	}
@@ -538,6 +539,7 @@ func (cc *CategoryController) UpdateCategory(c *gin.Context) {
 	category.Name = req.Name
 	category.Description = req.Description
 	category.ImageURL = req.ImageURL
+	category.MenuImageURL = req.MenuImageURL
 	category.ParentID = req.ParentID
 	category.SortOrder = req.SortOrder
 	category.IsActive = req.IsActive

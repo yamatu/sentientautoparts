@@ -73,13 +73,45 @@ func (s *StorefrontController) Navigation(c *gin.Context) {
 	}
 	type categoryResponse struct {
 		models.Category
-		ProductCount int64 `json:"product_count"`
+		ProductCount int64  `json:"product_count"`
+		ProductImage string `json:"product_image,omitempty"`
 	}
 	result := []categoryResponse{}
 	for _, cat := range categories {
-		result = append(result, categoryResponse{cat, totals[cat.ID]})
+		row := categoryResponse{Category: cat, ProductCount: totals[cat.ID]}
+		if cat.ParentID == nil && cat.MenuImageURL == "" && cat.ImageURL == "" && totals[cat.ID] > 0 {
+			image, err := categoryProductImage(cat.ID, categories)
+			if err != nil {
+				storeError(c, err)
+				return
+			}
+			row.ProductImage = image
+		}
+		result = append(result, row)
 	}
 	storeOK(c, gin.H{"categories": result, "pages": pages, "makes": makes, "part_types": types})
+}
+// categoryProductImage picks an active product's primary image from the
+// category subtree so the Products menu has a picture before one is uploaded.
+func categoryProductImage(rootID uint, categories []models.Category) (string, error) {
+	ids := []uint{rootID}
+	for i := 0; i < len(ids); i++ {
+		for _, cat := range categories {
+			if cat.ParentID != nil && *cat.ParentID == ids[i] {
+				ids = append(ids, cat.ID)
+			}
+		}
+	}
+	var urls []string
+	err := config.DB.Model(&models.ProductImage{}).
+		Joins("JOIN products ON products.id = product_images.product_id").
+		Where("products.is_active = ? AND products.category_id IN ? AND product_images.url <> ''", true, ids).
+		Order("product_images.is_primary DESC, products.is_featured DESC, products.id ASC, product_images.sort_order ASC").
+		Limit(1).Pluck("product_images.url", &urls).Error
+	if err != nil || len(urls) == 0 {
+		return "", err
+	}
+	return urls[0], nil
 }
 func (s *StorefrontController) Home(c *gin.Context) {
 	var banners []models.Banner

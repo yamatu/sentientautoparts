@@ -5,7 +5,7 @@ import type { AutomotiveFields } from '@/types/automotive';
 import type { StorefrontSettings } from '@/types/storefront';
 import type { SocialMediaSettings } from '@/types';
 
-export interface Category { id: number; name: string; slug: string; description: string; image_url: string; parent_id?: number; product_count?: number; }
+export interface Category { id: number; name: string; slug: string; description: string; image_url: string; menu_image_url?: string; product_image?: string; parent_id?: number; product_count?: number; }
 export interface Page { id: number; page_key: string; title: string; summary: string; content: string; meta_title: string; meta_description: string; meta_keywords: string; updated_at: string; }
 export interface Article extends Omit<Page, 'page_key'> { slug: string; featured_image: string; }
 export interface Product extends Partial<AutomotiveFields> { id: number; sku: string; name: string; model: string; part_number: string; brand: string; description: string; short_description: string; price: number; category: Category; meta_title: string; meta_description: string; meta_keywords: string; image_urls: string | string[]; images: { url: string; alt_text: string }[]; attributes: { attribute_name: string; attribute_value: string }[]; updated_at: string; }

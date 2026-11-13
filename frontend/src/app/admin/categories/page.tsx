@@ -31,6 +31,8 @@ import { getErrorMessage } from '@/lib/errors';
 
 // Categories data now comes from API only
 
+type ImageField = 'image_url' | 'menu_image_url';
+
 export default function AdminCategoriesPage() {
   const { locale, t } = useAdminI18n();
   const { user } = useAuth();
@@ -43,7 +45,7 @@ export default function AdminCategoriesPage() {
   const [deletionTargetId, setDeletionTargetId] = useState('');
   const [seoJobCategoryId, setSeoJobCategoryId] = useState<number | null>(null);
   const [titleJobCategoryId, setTitleJobCategoryId] = useState<number | null>(null);
-  const [imagePickerOpen, setImagePickerOpen] = useState(false);
+  const [imagePickerField, setImagePickerField] = useState<ImageField | null>(null);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -53,6 +55,7 @@ export default function AdminCategoriesPage() {
     sort_order: 0,
     is_active: true,
     image_url: '',
+    menu_image_url: '',
   });
 
   const queryClient = useQueryClient();
@@ -75,7 +78,7 @@ export default function AdminCategoriesPage() {
       queryClient.invalidateQueries({ queryKey: queryKeys.categories.lists() });
       queryClient.invalidateQueries({ queryKey: queryKeys.categories.tree() });
       closeDrawer();
-      setFormData({ name: '', description: '', parent_id: '', sort_order: 0, is_active: true, image_url: '' });
+      setFormData({ name: '', description: '', parent_id: '', sort_order: 0, is_active: true, image_url: '', menu_image_url: '' });
     },
     onError: (error: unknown) => {
       toast.error(getErrorMessage(error, t('categories.toast.createFailed', 'Failed to create category')));
@@ -90,7 +93,7 @@ export default function AdminCategoriesPage() {
       queryClient.invalidateQueries({ queryKey: queryKeys.categories.lists() });
       queryClient.invalidateQueries({ queryKey: queryKeys.categories.tree() });
       closeDrawer();
-      setFormData({ name: '', description: '', parent_id: '', sort_order: 0, is_active: true, image_url: '' });
+      setFormData({ name: '', description: '', parent_id: '', sort_order: 0, is_active: true, image_url: '', menu_image_url: '' });
     },
     onError: (error: unknown) => {
       toast.error(getErrorMessage(error, t('categories.toast.updateFailed', 'Failed to update category')));
@@ -130,13 +133,14 @@ export default function AdminCategoriesPage() {
         sort_order: editingCategory.sort_order ?? 0,
         is_active: Boolean(editingCategory.is_active),
         image_url: editingCategory.image_url || '',
+        menu_image_url: editingCategory.menu_image_url || '',
       });
     }
   }, [editingCategory]);
 
   const openCreate = () => {
     setEditingCategory(null);
-    setFormData({ name: '', description: '', parent_id: '', sort_order: 0, is_active: true, image_url: '' });
+    setFormData({ name: '', description: '', parent_id: '', sort_order: 0, is_active: true, image_url: '', menu_image_url: '' });
     setDrawerOpen(true);
   };
 
@@ -337,6 +341,7 @@ export default function AdminCategoriesPage() {
           sort_order: Number(formData.sort_order) || 0,
           is_active: formData.is_active,
           image_url: formData.image_url || '',
+          menu_image_url: formData.menu_image_url || '',
         },
       });
     } else {
@@ -348,6 +353,7 @@ export default function AdminCategoriesPage() {
         sort_order: Number(formData.sort_order) || 0,
         is_active: formData.is_active,
         image_url: formData.image_url || '',
+        menu_image_url: formData.menu_image_url || '',
       });
     }
   };
@@ -391,6 +397,41 @@ export default function AdminCategoriesPage() {
       </AdminLayout>
     );
   }
+
+  const renderImageField = (field: ImageField, label: string, help: string) => (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+      <div className="flex items-start gap-3">
+        <div className="flex h-20 w-20 flex-shrink-0 items-center justify-center overflow-hidden rounded border border-gray-200 bg-gray-50">
+          {formData[field] ? (
+            <img src={formData[field]} alt="preview" className="h-full w-full object-contain" />
+          ) : (
+            <PhotoIcon className="h-7 w-7 text-gray-300" />
+          )}
+        </div>
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => setImagePickerField(field)}
+            className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <PhotoIcon className="h-4 w-4" />
+            {locale === 'zh' ? '从图库选择 / 上传' : 'Choose or upload'}
+          </button>
+          {formData[field] && (
+            <button
+              type="button"
+              onClick={() => setFormData(prev => ({ ...prev, [field]: '' }))}
+              className="text-left text-xs text-red-600 hover:underline"
+            >
+              {locale === 'zh' ? '移除图片' : 'Remove image'}
+            </button>
+          )}
+          <p className="text-xs text-gray-500">{help}</p>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <AdminLayout>
@@ -701,45 +742,17 @@ export default function AdminCategoriesPage() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {locale === 'zh' ? '分类图片' : 'Category image'}
-                  </label>
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-20 w-20 flex-shrink-0 items-center justify-center overflow-hidden rounded border border-gray-200 bg-gray-50">
-                      {formData.image_url ? (
-                        <img src={formData.image_url} alt="preview" className="h-full w-full object-contain" />
-                      ) : (
-                        <PhotoIcon className="h-7 w-7 text-gray-300" />
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setImagePickerOpen(true)}
-                        className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                      >
-                        <PhotoIcon className="h-4 w-4" />
-                        {locale === 'zh' ? '从图库选择 / 上传' : 'Choose or upload'}
-                      </button>
-                      {formData.image_url && (
-                        <button
-                          type="button"
-                          onClick={() => setFormData(prev => ({ ...prev, image_url: '' }))}
-                          className="text-left text-xs text-red-600 hover:underline"
-                        >
-                          {locale === 'zh' ? '移除图片' : 'Remove image'}
-                        </button>
-                      )}
-                      <p className="text-xs text-gray-500">
-                        {locale === 'zh'
-                          ? '显示在首页分类卡片和 Products 下拉菜单中，建议使用透明背景的方图。'
-                          : 'Shown on the homepage category cards and in the Products menu. A square image with a transparent background works best.'}
-                      </p>
-                    </div>
-                  </div>
-                  <input type="hidden" name="image_url" value={formData.image_url} readOnly />
-                </div>
+                {renderImageField('image_url',
+                  locale === 'zh' ? '分类图片' : 'Category image',
+                  locale === 'zh'
+                    ? '显示在首页分类卡片中；未设置菜单图片时也用于 Products 下拉菜单。'
+                    : 'Shown on the homepage category cards, and in the Products menu when no menu image is set.')}
+
+                {renderImageField('menu_image_url',
+                  locale === 'zh' ? 'Products 菜单图片' : 'Products menu image',
+                  locale === 'zh'
+                    ? '鼠标悬停 Products 时下拉菜单里显示的产品图，建议使用白底或透明背景的产品图。留空则依次使用分类图片、该分类下的产品主图。'
+                    : 'Product picture shown in the Products hover menu. Use a white or transparent background. Falls back to the category image, then a product photo from this category.')}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
@@ -893,13 +906,16 @@ export default function AdminCategoriesPage() {
         </div>
       ) : null}
       <MediaPickerModal
-        open={imagePickerOpen}
-        onClose={() => setImagePickerOpen(false)}
+        open={imagePickerField !== null}
+        onClose={() => setImagePickerField(null)}
         multiple={false}
-        title={locale === 'zh' ? '选择分类图片' : 'Select category image'}
+        title={imagePickerField === 'menu_image_url'
+          ? (locale === 'zh' ? '选择 Products 菜单图片' : 'Select Products menu image')
+          : (locale === 'zh' ? '选择分类图片' : 'Select category image')}
         onSelect={assets => {
-          if (assets[0]) setFormData(prev => ({ ...prev, image_url: assets[0].url }));
-          setImagePickerOpen(false);
+          const field = imagePickerField;
+          if (assets[0] && field) setFormData(prev => ({ ...prev, [field]: assets[0].url }));
+          setImagePickerField(null);
         }}
       />
     </AdminLayout>

@@ -10,8 +10,8 @@ import PublicButton from './PublicButton';
 import RichText from './RichText';
 
 // The header is a client component: hand it only the root categories and the
-// fields its megamenu renders, not every category record on every page.
-function headerCategory({id,name,slug,image_url,product_count}:Category):Category{return {id,name,slug,description:'',image_url,product_count};}
+// one picture its Products menu renders, not every category record on every page.
+function headerCategory({id,name,slug,image_url,menu_image_url,product_image}:Category):Category{return {id,name,slug,description:'',image_url:'',menu_image_url:menu_image_url||image_url||product_image||''};}
 
 export default async function Shell({children,inquiry=true}:{children:ReactNode;inquiry?:boolean}){
  const [nav,config,home]=await Promise.all([getNavigation(),getStorefrontSettings(),getB2BHome()]);

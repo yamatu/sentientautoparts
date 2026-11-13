@@ -11,6 +11,7 @@ type Category struct {
 	Slug         string                `json:"slug" gorm:"size:100;uniqueIndex;not null"`
 	Description  string                `json:"description" gorm:"type:text"`
 	ImageURL     string                `json:"image_url" gorm:"type:text"`
+	MenuImageURL string                `json:"menu_image_url" gorm:"type:text"`
 	ParentID     *uint                 `json:"parent_id" gorm:"index"`
 	Parent       *Category             `json:"parent,omitempty" gorm:"foreignKey:ParentID"`
 	Children     []Category            `json:"children,omitempty" gorm:"foreignKey:ParentID"`
@@ -277,10 +278,11 @@ type ProductTranslationReq struct {
 type CategoryCreateRequest struct {
 	Name        string `json:"name" binding:"required"`
 	Description string `json:"description"`
-	ImageURL    string `json:"image_url"`
-	ParentID    *uint  `json:"parent_id"`
-	SortOrder   int    `json:"sort_order"`
-	IsActive    bool   `json:"is_active"`
+	ImageURL     string `json:"image_url"`
+	MenuImageURL string `json:"menu_image_url"`
+	ParentID     *uint  `json:"parent_id"`
+	SortOrder    int    `json:"sort_order"`
+	IsActive     bool   `json:"is_active"`
 }
 
 // PaginationResponse represents paginated response
