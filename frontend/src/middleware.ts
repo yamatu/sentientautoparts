@@ -258,7 +258,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(canonicalUrl, 301);
   }
 
-  const indexNowKeyMatch = pathname.match(/^\/([A-Za-z0-9_-]{8,128})\.txt$/);
+  const indexNowKeyMatch = pathname !== '/llms.txt' && pathname !== '/llms-full.txt'
+    ? pathname.match(/^\/([A-Za-z0-9_-]{8,128})\.txt$/)
+    : null;
   if (indexNowKeyMatch) {
     const requestedKey = indexNowKeyMatch[1];
     try {

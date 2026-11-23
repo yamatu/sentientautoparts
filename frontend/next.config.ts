@@ -13,6 +13,8 @@ const NON_DEFAULT_LOCALE_SEGMENTS = [
   'media-thumb',
   'images',
   'sitemap-products',
+  'llms\\.txt',
+  'llms-full\\.txt',
 ].join('|');
 
 const nextConfig: NextConfig = {
@@ -50,10 +52,6 @@ const nextConfig: NextConfig = {
       beforeFiles: [
         { source: '/Uploads/:path*', destination: '/legacy/uploads/:path*' },
         { source: '/Apps/Tpl/Home/Default/Public/:path*', destination: '/legacy/theme/:path*' },
-        {
-          source: '/:indexnowKey([A-Za-z0-9_-]{8,128}).txt',
-          destination: '/api/indexnow-key?key=:indexnowKey',
-        },
       ],
       afterFiles: [
         // Serve /sitemap-products/:page.xml from an internal route without the ".xml" segment.
@@ -61,6 +59,11 @@ const nextConfig: NextConfig = {
         {
           source: '/sitemap-products/:page.xml',
           destination: '/sitemap-products/:page',
+        },
+        // IndexNow verification key file (runs after static routes so /llms.txt and /llms-full.txt match first).
+        {
+          source: '/:indexnowKey([A-Za-z0-9_-]{8,128}).txt',
+          destination: '/api/indexnow-key?key=:indexnowKey',
         },
         // When you run without an external Nginx (directly hitting Next on :3000),
         // proxy /uploads/* to the backend so uploaded images keep working.
@@ -106,14 +109,6 @@ const nextConfig: NextConfig = {
 
   async headers() {
     return [
-      {
-        source: '/:indexnowKey([A-Za-z0-9_-]{8,128}).txt',
-        headers: [
-          { key: 'Cache-Control', value: 'no-store, no-cache, must-revalidate, proxy-revalidate' },
-          { key: 'Pragma', value: 'no-cache' },
-          { key: 'Expires', value: '0' },
-        ],
-      },
       // SEO-friendly caching for static assets
       {
         source: '/images/:path*',

@@ -1,7 +1,8 @@
 import Shell from '@/components/storefront/Shell';
 import SafeImage from '@/components/storefront/SafeImage';
 import { storefront } from '@/services/storefront.server';
-import { pageMetadata, plainText } from '@/lib/storefront-seo';
+import { breadcrumbSchema, DISPLAY_SITE_NAME, jsonLD, pageMetadata, plainText } from '@/lib/storefront-seo';
+import { getSiteUrl } from '@/lib/url';
 import Link from 'next/link';
 import { ArrowUpRight } from 'lucide-react';
 
@@ -9,7 +10,18 @@ import { ArrowUpRight } from 'lucide-react';
 // the static [locale] layout, dropping this makes the page 500 at runtime with
 // DYNAMIC_SERVER_USAGE. Its backend reads still use the Data Cache.
 export const dynamic = 'force-dynamic';
-export function generateMetadata() { return pageMetadata('/news', 'News & Insights'); }
+
+const NEWS_DESCRIPTION =
+  'Technical guides, A/C compressor matching checklists, refrigerant oil balance tips, and automotive climate-control engineering insights from SENTIENT Auto Parts.';
+
+export async function generateMetadata({ searchParams }: { searchParams: Promise<{ page?: string }> }) {
+  const params = await searchParams;
+  const page = params.page ? Math.max(1, parseInt(params.page, 10) || 1) : 1;
+  return {
+    ...(await pageMetadata('/news', 'News & Technical Insights', NEWS_DESCRIPTION)),
+    ...(page > 1 ? { robots: { index: false, follow: true } } : {}),
+  };
+}
 
 interface Article {
   id: number;
@@ -30,7 +42,7 @@ interface ArticlesResponse {
 
 function ArticleCard({ a }: { a: Article }) {
   const summary = plainText(a.summary);
-  const date = a.updated_at ? new Date(a.updated_at).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' }) : null;
+  const date = a.updated_at ? new Date(a.updated_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : null;
   return (
     <article className="news-card">
       {a.featured_image && (
@@ -39,8 +51,14 @@ function ArticleCard({ a }: { a: Article }) {
         </Link>
       )}
       <div className="news-card-body">
-        {date && <time className="news-card-date" dateTime={a.updated_at}>{date}</time>}
-        <h2><Link href={`/news/${a.slug}`}>{a.title}</Link></h2>
+        {date && (
+          <time className="news-card-date" dateTime={a.updated_at}>
+            {date}
+          </time>
+        )}
+        <h2>
+          <Link href={`/news/${a.slug}`}>{a.title}</Link>
+        </h2>
         {summary && <p className="news-card-summary">{summary}</p>}
         <Link href={`/news/${a.slug}`} className="sap-text-link news-card-link">
           Read article <ArrowUpRight size={15} />
@@ -52,12 +70,19 @@ function ArticleCard({ a }: { a: Article }) {
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ page?: string }> }) {
   const params = await searchParams;
-  const page = params.page ? Math.max(1, parseInt(params.page)) : 1;
+  const page = params.page ? Math.max(1, parseInt(params.page, 10) || 1) : 1;
   const data = await storefront<ArticlesResponse>(`articles?page=${page}&page_size=12`);
+  const siteUrl = getSiteUrl();
+
+  const breadcrumb = breadcrumbSchema([
+    { name: 'Home', path: '/' },
+    { name: 'News & Technical Insights', path: '/news' },
+  ]);
 
   if (!data) {
     return (
       <Shell>
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLD(breadcrumb) }} />
         <div className="sap-page-heading">
           <div className="sap-container">
             <nav className="sap-breadcrumb" aria-label="Breadcrumb">
@@ -79,9 +104,33 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
   }
 
   const { articles, total_pages } = data;
+  const collectionSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'CollectionPage',
+    name: `News & Technical Insights — ${DISPLAY_SITE_NAME}`,
+    description: NEWS_DESCRIPTION,
+    url: `${siteUrl}/news`,
+    isPartOf: { '@id': `${siteUrl}/#website` },
+    ...(articles?.length
+      ? {
+          mainEntity: {
+            '@type': 'ItemList',
+            numberOfItems: data.total,
+            itemListElement: articles.map((a, idx) => ({
+              '@type': 'ListItem',
+              position: (page - 1) * 12 + idx + 1,
+              url: `${siteUrl}/news/${a.slug}`,
+              name: a.title,
+            })),
+          },
+        }
+      : {}),
+  };
 
   return (
     <Shell>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLD(collectionSchema) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLD(breadcrumb) }} />
       <div className="sap-page-heading">
         <div className="sap-container">
           <nav className="sap-breadcrumb" aria-label="Breadcrumb">
@@ -97,11 +146,17 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
         {articles?.length ? (
           <>
             <div className="news-grid">
-              {articles.map(a => <ArticleCard key={a.id} a={a} />)}
+              {articles.map((a) => (
+                <ArticleCard key={a.id} a={a} />
+              ))}
             </div>
             {total_pages > 1 && (
               <div className="sap-pagination">
-                {page > 1 && <Link href={`/news?page=${page - 1}`} aria-label="Previous page">← Previous</Link>}
+                {page > 1 && (
+                  <Link href={page === 2 ? '/news' : `/news?page=${page - 1}`} rel="prev" aria-label="Previous page">
+                    ← Previous
+                  </Link>
+                )}
                 {Array.from({ length: Math.min(total_pages, 7) }, (_, i) => {
                   let pageNum: number;
                   if (total_pages <= 7) {
@@ -114,12 +169,20 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
                     pageNum = page - 3 + i;
                   }
                   return pageNum === page ? (
-                    <span key={pageNum} aria-current="page" className="sap-pagination-current">{pageNum}</span>
+                    <span key={pageNum} aria-current="page" className="sap-pagination-current">
+                      {pageNum}
+                    </span>
                   ) : (
-                    <Link key={pageNum} href={`/news?page=${pageNum}`}>{pageNum}</Link>
+                    <Link key={pageNum} href={pageNum === 1 ? '/news' : `/news?page=${pageNum}`}>
+                      {pageNum}
+                    </Link>
                   );
                 })}
-                {page < total_pages && <Link href={`/news?page=${page + 1}`} aria-label="Next page">Next →</Link>}
+                {page < total_pages && (
+                  <Link href={`/news?page=${page + 1}`} rel="next" aria-label="Next page">
+                    Next →
+                  </Link>
+                )}
               </div>
             )}
           </>

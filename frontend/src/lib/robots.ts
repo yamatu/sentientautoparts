@@ -2,6 +2,8 @@ export const PUBLIC_CONTENT_SIGNAL_POLICY = 'search=yes, ai-input=yes, ai-train=
 
 export const PRIVATE_ROBOTS_PATHS = [
   '/admin',
+  '/homepage-preview',
+  '/api/',
 ] as const;
 
 export function buildRobotsTxt(siteUrl: string): string {

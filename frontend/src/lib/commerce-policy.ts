@@ -64,9 +64,9 @@ export function commercePolicyReturnShippingText(policy?: CommercePolicySetting,
     case 'customer':
       return zh ? '退货运费由买家承担' : 'return shipping is arranged and paid by the buyer';
     case 'merchant':
-      return zh ? '退货运费由 Vibocnc 承担' : 'return shipping is covered by Vibocnc';
+      return zh ? '退货运费由 SENTIENT Auto Parts 承担' : 'return shipping is covered by SENTIENT Auto Parts';
     default:
-      return zh ? '退货运费由双方各自承担' : 'return shipping costs are shared between buyer and Vibocnc';
+      return zh ? '退货运费由双方各自承担' : 'return shipping costs are shared between the buyer and SENTIENT Auto Parts';
   }
 }
 

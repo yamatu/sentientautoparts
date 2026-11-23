@@ -16,6 +16,7 @@ import { getPublicMessageOverrides } from '@/lib/i18n/messages';
 import type { LocaleRouteParams } from '@/lib/i18n/server';
 import { getSiteUrl } from '@/lib/url';
 import { getStorefrontSettings } from '@/services/storefront.server';
+import { DISPLAY_SITE_NAME } from '@/lib/storefront-seo';
 import TrackingCode, { type PublicTrackingConfig } from '@/components/analytics/TrackingCode';
 
 // Nothing is prerendered at build time (the Docker build has no backend);
@@ -27,8 +28,27 @@ export async function generateStaticParams() {
 }
 
 export async function generateMetadata(): Promise<Metadata> {
-  const {site}=await getStorefrontSettings();
-  return { metadataBase: new URL(getSiteUrl()), title: { default: site.brand_name, template: `%s | ${site.brand_name}` }, description: site.home_meta_description, icons: { icon: [{ url: '/favicon.ico', sizes: 'any' }, { url: '/favicon-32x32.png', type: 'image/png', sizes: '32x32' }, { url: '/favicon-16x16.png', type: 'image/png', sizes: '16x16' }], apple: '/apple-touch-icon.png' }, manifest: '/manifest.json', robots: { index: true, follow: true }, verification: { google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION || undefined } };
+  const { site } = await getStorefrontSettings();
+  return {
+    metadataBase: new URL(getSiteUrl()),
+    title: {
+      default: DISPLAY_SITE_NAME,
+      template: `%s | ${DISPLAY_SITE_NAME}`,
+    },
+    description: site.home_meta_description,
+    icons: {
+      icon: [
+        { url: '/favicon.ico', sizes: 'any' },
+        { url: '/favicon-32x32.png', type: 'image/png', sizes: '32x32' },
+        { url: '/favicon-16x16.png', type: 'image/png', sizes: '16x16' },
+      ],
+      apple: '/apple-touch-icon.png',
+    },
+    manifest: '/manifest.json',
+    verification: {
+      google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION || undefined,
+    },
+  };
 }
 async function tracking(): Promise<PublicTrackingConfig | null> {
   try {

@@ -10,7 +10,11 @@ interface APIResponse<T> {
 }
 
 const getApiBaseUrl = () => {
-  const backendUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8080';
+  const backendUrl = (
+    process.env.API_INTERNAL_URL ||
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    'http://127.0.0.1:8080'
+  ).replace(/\/+$/, '');
   return `${backendUrl}/api/v1`;
 };
 
@@ -21,8 +25,9 @@ const getApiBaseUrl = () => {
 export const getCommercePolicyCached = cache(async (): Promise<CommercePolicySetting> => {
   try {
     const res = await fetch(`${getApiBaseUrl()}/public/commerce-policy`, {
-      next: { revalidate: 3600, tags: ['commerce-policy'] },
+      next: { revalidate: 3600, tags: ['public-api', 'commerce-policy'] },
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(3000),
     });
     if (res.ok) {
       const json = (await res.json()) as APIResponse<CommercePolicySetting>;
