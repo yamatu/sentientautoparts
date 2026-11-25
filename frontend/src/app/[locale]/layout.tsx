@@ -67,5 +67,5 @@ export default async function RootLayout({ children, params }: { children: React
   if (!isPublicLocale(rawLocale)) notFound();
   const locale = normalizePublicLocale(rawLocale);
   const { hreflang, dir } = getLocaleConfig(locale);
-  return <html lang={hreflang} dir={dir} className={inter.variable}><head><TrackingCode config={await tracking()} /><meta name="theme-color" content="#1a51ff" /></head><body><PublicI18nProvider initialLocale={locale} messageOverrides={getPublicMessageOverrides(locale)}>{children}</PublicI18nProvider></body></html>;
+  return <html lang={hreflang} dir={dir} className={inter.variable}><head><TrackingCode config={await tracking()} /><meta name="theme-color" content="#1a51ff" /><meta name="facebook-domain-verification" content="tytxa5d1q2u4xqzcm7ax6jvlp0krtw" /></head><body><PublicI18nProvider initialLocale={locale} messageOverrides={getPublicMessageOverrides(locale)}>{children}</PublicI18nProvider></body></html>;
 }
